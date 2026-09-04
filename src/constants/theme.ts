@@ -7,21 +7,26 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
+// Dark, rugged/moto palette. The app forces userInterfaceStyle "dark" (see
+// app.config.ts), so `light` isn't reachable today — kept identical to
+// `dark` so the Colors[light|dark] shape stays intact for a future
+// system-appearance mode without a breaking change.
+const moto = {
+  text: '#F5F5F7',
+  background: '#0B0B0D',
+  backgroundElement: '#1C1C1F',
+  backgroundSelected: '#26262B',
+  textSecondary: '#9A9AA2',
+  border: '#2E2E33',
+  accent: '#FF4B1F',
+  accentText: '#FFFFFF',
+  danger: '#FF453A',
+  success: '#32D74B',
+} as const;
+
 export const Colors = {
-  light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
-  },
-  dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
-  },
+  light: moto,
+  dark: moto,
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;

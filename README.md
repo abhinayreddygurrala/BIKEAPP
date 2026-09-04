@@ -1,56 +1,49 @@
-# Welcome to your Expo app 👋
+# BikeApp
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+An iOS motorcycle riding companion app: GPS ride tracking today, with maintenance/fuel logging, turn-by-turn navigation, and group rides planned for later sessions.
 
-## Get started
+Stack: Expo (TypeScript, Expo Router) + Supabase (Postgres, Auth, Realtime).
 
-1. Install dependencies
+## Setup
+
+1. Install dependencies:
 
    ```bash
    npm install
    ```
 
-2. Start the app
+2. Create a [Supabase](https://supabase.com) project, then apply the migrations in `supabase/migrations/` (via the SQL editor, or `supabase db push` with the Supabase CLI).
+
+3. Copy `.env.example` to `.env` and fill in your project's URL and anon key (Project Settings → API).
+
+4. Regenerate `src/lib/database.types.ts` from your real schema (it's currently hand-authored to match the migrations):
 
    ```bash
-   npx expo start
+   npx supabase gen types typescript --project-id <id> --schema public > src/lib/database.types.ts
    ```
 
-In the output, you'll find options to open the app in a
+## Running on a device
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+Background location tracking and the map view both require native code that isn't in Expo Go — you need a custom dev client. Two ways to get one on a physical iPhone:
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- **Local build** (free, needs Xcode + CocoaPods installed): `npx expo prebuild -p ios` then `npx expo run:ios --device`. With a free Apple ID the signing certificate expires after 7 days and needs reinstalling.
+- **EAS Build** (needs an Expo account, and a paid Apple Developer Program membership for device provisioning): `eas build --profile development --platform ios`.
 
-## Get a fresh project
+The iOS Simulator has no real GPS hardware — it's fine for a UI smoke test but cannot validate whether background tracking survives the phone being locked, which is the part that actually matters for this feature. Test on a real device before trusting ride tracking.
 
-When you're ready, run:
+## Ride tracking walk-test protocol
 
-```bash
-npm run reset-project
-```
+1. Grant "While Using" then "Always Allow" location access when prompted.
+2. Start a ride and walk/ride a short outdoor route (5–10 min).
+3. Lock the screen partway through and keep moving for 1–2 minutes — this is the critical test. The recorded route should have no straight-line gap across the locked period.
+4. Background the app (press Home) for another minute — tracking should continue.
+5. Pause, stand still ~30s, Resume — the paused interval should add no distance or duration.
+6. Stop, and confirm the stats look plausible and the ride appears in history (syncs to Supabase once online).
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Project structure
 
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- `src/app/` — Expo Router routes: `(auth)` (sign-in/sign-up), `(app)/(tabs)` (Rides/Maintenance/Navigate/Group/Settings), plus ride and bike detail screens.
+- `src/features/ride-tracking/` — background location task, local SQLite storage, distance/speed/elevation math.
+- `src/services/` — Supabase read/write helpers (`ridesService`, `bikesService`).
+- `src/lib/supabase.ts` — Supabase client with encrypted session storage.
+- `supabase/migrations/` — full schema, including stub tables for maintenance, fuel logs, and group/social features not yet built.
