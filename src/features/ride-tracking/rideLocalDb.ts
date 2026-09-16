@@ -14,6 +14,8 @@ export type LocalRide = {
   max_speed_kmh: number;
   elevation_gain_m: number;
   elevation_loss_m: number;
+  lean_max_deg: number;
+  lean_avg_deg: number;
   route_polyline: string | null;
   status: LocalRideStatus;
   synced: 0 | 1;
@@ -51,6 +53,8 @@ function getDb() {
           max_speed_kmh REAL NOT NULL DEFAULT 0,
           elevation_gain_m REAL NOT NULL DEFAULT 0,
           elevation_loss_m REAL NOT NULL DEFAULT 0,
+          lean_max_deg REAL NOT NULL DEFAULT 0,
+          lean_avg_deg REAL NOT NULL DEFAULT 0,
           route_polyline TEXT,
           status TEXT NOT NULL DEFAULT 'recording',
           synced INTEGER NOT NULL DEFAULT 0
@@ -76,11 +80,16 @@ function getDb() {
   return dbPromise;
 }
 
-export async function createLocalRide(id: string, bikeId: string | null, startedAt: string) {
+export async function createLocalRide(
+  id: string,
+  bikeId: string | null,
+  startedAt: string,
+  title: string | null = null
+) {
   const db = await getDb();
   await db.runAsync(
-    `INSERT INTO rides_local (id, bike_id, started_at, status, synced) VALUES (?, ?, ?, 'recording', 0)`,
-    [id, bikeId, startedAt]
+    `INSERT INTO rides_local (id, bike_id, started_at, title, status, synced) VALUES (?, ?, ?, ?, 'recording', 0)`,
+    [id, bikeId, startedAt, title]
   );
 }
 
@@ -143,6 +152,8 @@ export async function updateLocalRideStats(
       | 'max_speed_kmh'
       | 'elevation_gain_m'
       | 'elevation_loss_m'
+      | 'lean_max_deg'
+      | 'lean_avg_deg'
     >
   >
 ) {
@@ -172,6 +183,26 @@ export async function finalizeLocalRide(
 export async function markRideSynced(rideId: string) {
   const db = await getDb();
   await db.runAsync(`UPDATE rides_local SET synced = 1 WHERE id = ?`, [rideId]);
+}
+
+export async function updateLocalRideFields(
+  rideId: string,
+  fields: Partial<Pick<LocalRide, 'title' | 'bike_id'>>
+) {
+  const db = await getDb();
+  const keys = Object.keys(fields) as (keyof typeof fields)[];
+  if (keys.length === 0) return;
+  const setClause = keys.map((k) => `${k} = ?`).join(', ');
+  await db.runAsync(`UPDATE rides_local SET ${setClause} WHERE id = ?`, [
+    ...keys.map((k) => fields[k] as string | null),
+    rideId,
+  ]);
+}
+
+export async function deleteLocalRide(rideId: string) {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM ride_points_local WHERE ride_id = ?`, [rideId]);
+  await db.runAsync(`DELETE FROM rides_local WHERE id = ?`, [rideId]);
 }
 
 export async function getLocalRide(rideId: string) {

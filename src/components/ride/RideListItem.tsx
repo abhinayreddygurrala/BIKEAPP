@@ -4,13 +4,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { formatDistanceKm, formatDuration } from '@/features/ride-tracking/rideMath';
+import { distanceUnitLabel, formatDistance, formatDuration, type Units } from '@/features/ride-tracking/rideMath';
 
 export type RideListItemProps = {
   title: string;
   startedAt: string;
   distanceMeters: number | null;
   durationSeconds: number | null;
+  units: Units;
   pendingSync?: boolean;
   onPress?: () => void;
 };
@@ -20,6 +21,7 @@ export function RideListItem({
   startedAt,
   distanceMeters,
   durationSeconds,
+  units,
   pendingSync,
   onPress,
 }: RideListItemProps) {
@@ -43,7 +45,9 @@ export function RideListItem({
           {date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
         </ThemedText>
         <View style={styles.statsRow}>
-          <ThemedText type="smallBold">{formatDistanceKm(distanceMeters)} km</ThemedText>
+          <ThemedText type="smallBold">
+            {formatDistance(distanceMeters, units)} {distanceUnitLabel(units)}
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {formatDuration(durationSeconds)}
           </ThemedText>

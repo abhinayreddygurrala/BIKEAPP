@@ -93,9 +93,47 @@ export function decodeRoutePolyline(encoded: string): { latitude: number; longit
   return polyline.decode(encoded).map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
 }
 
-export function formatDistanceKm(distanceMeters: number | null) {
+export type Units = 'metric' | 'imperial';
+
+const KM_TO_MI = 0.621371;
+
+export function distanceUnitLabel(units: Units) {
+  return units === 'imperial' ? 'mi' : 'km';
+}
+
+export function speedUnitLabel(units: Units) {
+  return units === 'imperial' ? 'mph' : 'km/h';
+}
+
+/** Inverse of formatDistance: a value entered in the display unit, back to meters for storage. */
+export function distanceToMeters(value: number, units: Units) {
+  const km = units === 'imperial' ? value / KM_TO_MI : value;
+  return km * 1000;
+}
+
+export type AggregateStats = {
+  rideCount: number;
+  totalDistanceMeters: number;
+  totalDurationSeconds: number;
+};
+
+export function computeAggregateStats(
+  rides: { distance_meters: number | null; duration_seconds: number | null }[]
+): AggregateStats {
+  return rides.reduce(
+    (acc, r) => ({
+      rideCount: acc.rideCount + 1,
+      totalDistanceMeters: acc.totalDistanceMeters + (r.distance_meters ?? 0),
+      totalDurationSeconds: acc.totalDurationSeconds + (r.duration_seconds ?? 0),
+    }),
+    { rideCount: 0, totalDistanceMeters: 0, totalDurationSeconds: 0 }
+  );
+}
+
+export function formatDistance(distanceMeters: number | null, units: Units) {
   if (!distanceMeters) return '0.0';
-  return (distanceMeters / 1000).toFixed(1);
+  const km = distanceMeters / 1000;
+  return (units === 'imperial' ? km * KM_TO_MI : km).toFixed(1);
 }
 
 export function formatDuration(durationSeconds: number | null) {
@@ -109,7 +147,12 @@ export function formatDuration(durationSeconds: number | null) {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function formatSpeedKmh(speedKmh: number | null) {
+export function formatSpeed(speedKmh: number | null, units: Units) {
   if (!speedKmh) return '0';
-  return speedKmh.toFixed(0);
+  return (units === 'imperial' ? speedKmh * KM_TO_MI : speedKmh).toFixed(0);
+}
+
+export function formatLeanDeg(leanDeg: number | null) {
+  if (!leanDeg) return '0';
+  return Math.round(Math.abs(leanDeg)).toString();
 }

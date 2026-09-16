@@ -13,6 +13,7 @@ export interface Database {
           id: string;
           display_name: string | null;
           avatar_url: string | null;
+          bio: string | null;
           units: 'metric' | 'imperial';
           created_at: string;
         };
@@ -20,6 +21,7 @@ export interface Database {
           id: string;
           display_name?: string | null;
           avatar_url?: string | null;
+          bio?: string | null;
           units?: 'metric' | 'imperial';
           created_at?: string;
         };
@@ -68,6 +70,8 @@ export interface Database {
           max_speed_kmh: number | null;
           elevation_gain_m: number | null;
           elevation_loss_m: number | null;
+          lean_max_deg: number | null;
+          lean_avg_deg: number | null;
           route_polyline: string | null;
           privacy_level: 'private' | 'friends' | 'public';
           created_at: string;
@@ -85,6 +89,8 @@ export interface Database {
           max_speed_kmh?: number | null;
           elevation_gain_m?: number | null;
           elevation_loss_m?: number | null;
+          lean_max_deg?: number | null;
+          lean_avg_deg?: number | null;
           route_polyline?: string | null;
           privacy_level?: 'private' | 'friends' | 'public';
           created_at?: string;
@@ -177,12 +183,18 @@ export interface Database {
           id: string;
           name: string;
           owner_id: string;
+          description: string | null;
+          avatar_url: string | null;
+          invite_code: string;
           created_at: string;
         };
         Insert: {
           id?: string;
           name: string;
           owner_id: string;
+          description?: string | null;
+          avatar_url?: string | null;
+          invite_code?: string;
           created_at?: string;
         };
         Update: Partial<Database['public']['Tables']['groups']['Insert']>;
@@ -202,6 +214,28 @@ export interface Database {
           joined_at?: string;
         };
         Update: Partial<Database['public']['Tables']['group_members']['Insert']>;
+        Relationships: [];
+      };
+      group_messages: {
+        Row: {
+          id: string;
+          group_id: string;
+          sender_id: string;
+          kind: 'text' | 'image';
+          content: string | null;
+          media_url: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          group_id: string;
+          sender_id: string;
+          kind?: 'text' | 'image';
+          content?: string | null;
+          media_url?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['group_messages']['Insert']>;
         Relationships: [];
       };
       live_locations: {
@@ -232,7 +266,12 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      get_group_by_invite_code: {
+        Args: { code: string };
+        Returns: Database['public']['Tables']['groups']['Row'];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

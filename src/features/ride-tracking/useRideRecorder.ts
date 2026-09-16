@@ -11,6 +11,7 @@ import {
 } from '@/features/ride-tracking/rideLocalDb';
 import { computeRideStats, encodeRoutePolyline, type RideStats } from '@/features/ride-tracking/rideMath';
 import { RIDE_TRACKING_TASK } from '@/features/ride-tracking/rideTrackingTask';
+import { useLeanAngleTracker } from '@/features/ride-tracking/useLeanAngleTracker';
 import { uuidv4 } from '@/lib/uuid';
 
 export type RecorderStatus = 'idle' | 'recording' | 'paused' | 'stopped';
@@ -52,6 +53,7 @@ export function useRideRecorder() {
   const [stats, setStats] = useState<RideStats>(EMPTY_STATS);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentRef = useRef(0);
+  const lean = useLeanAngleTracker(status === 'recording');
 
   const refreshFromDb = useCallback(async (id: string) => {
     const dbPoints = await getRidePoints(id);
@@ -83,6 +85,7 @@ export function useRideRecorder() {
       const id = uuidv4();
       const startedAt = new Date().toISOString();
       segmentRef.current = 0;
+      lean.reset();
 
       await createLocalRide(id, bikeId, startedAt);
       await setActiveRideId(id);
@@ -95,7 +98,7 @@ export function useRideRecorder() {
       setStatus('recording');
       startPolling(id);
     },
-    [startPolling]
+    [startPolling, lean]
   );
 
   const pause = useCallback(async () => {
@@ -135,6 +138,8 @@ export function useRideRecorder() {
       max_speed_kmh: finalStats.maxSpeedKmh,
       elevation_gain_m: finalStats.elevationGainM,
       elevation_loss_m: finalStats.elevationLossM,
+      lean_max_deg: lean.maxDeg,
+      lean_avg_deg: lean.avgDeg,
     });
     await finalizeLocalRide(rideId, new Date().toISOString(), routePolyline, 'stopped');
     await setActiveRideId(null);
@@ -144,12 +149,23 @@ export function useRideRecorder() {
     setStatus('stopped');
 
     return rideId;
-  }, [rideId, stopPolling]);
+  }, [rideId, stopPolling, lean.maxDeg, lean.avgDeg]);
 
   const coordinates = useMemo(
     () => points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
     [points]
   );
 
-  return { status, rideId, points, coordinates, stats, start, pause, resume, stop };
+  return {
+    status,
+    rideId,
+    points,
+    coordinates,
+    stats,
+    lean: { currentDeg: lean.currentDeg, maxDeg: lean.maxDeg, avgDeg: lean.avgDeg },
+    start,
+    pause,
+    resume,
+    stop,
+  };
 }

@@ -1,17 +1,29 @@
-import { useLocalSearchParams } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { RouteMap } from '@/components/map/RouteMap';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { StatCard } from '@/components/ui/StatCard';
 import { Spacing } from '@/constants/theme';
-import { decodeRoutePolyline, formatDistanceKm, formatDuration, formatSpeedKmh } from '@/features/ride-tracking/rideMath';
+import { useAuth } from '@/features/auth/AuthContext';
+import {
+  decodeRoutePolyline,
+  distanceUnitLabel,
+  formatDistance,
+  formatDuration,
+  formatLeanDeg,
+  formatSpeed,
+  speedUnitLabel,
+} from '@/features/ride-tracking/rideMath';
+import { useTheme } from '@/hooks/use-theme';
 import { getRideDetail, type RideSummary } from '@/services/ridesService';
 
 export default function RideDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { units } = useAuth();
+  const theme = useTheme();
   const [ride, setRide] = useState<RideSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,30 +55,71 @@ export default function RideDetailScreen() {
   }
 
   const coordinates = ride.route_polyline ? decodeRoutePolyline(ride.route_polyline) : [];
+  const fallbackTitle =
+    new Date(ride.started_at).toLocaleDateString(undefined, { weekday: 'long' }) + ' Ride';
 
   return (
     <ThemedView style={styles.flex}>
-      <RouteMap coordinates={coordinates} fitOnChange style={styles.map} />
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Pressable onPress={() => router.push({ pathname: '/(app)/ride/edit', params: { id } })} hitSlop={8}>
+              <ThemedText type="default" style={{ color: theme.accent }}>
+                Edit
+              </ThemedText>
+            </Pressable>
+          ),
+        }}
+      />
 
-      <View style={styles.statsPanel}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          {new Date(ride.started_at).toLocaleString(undefined, {
-            weekday: 'long',
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          })}
-        </ThemedText>
-        <View style={styles.statsRow}>
-          <StatCard label="Distance" value={formatDistanceKm(ride.distance_meters)} unit="km" />
-          <StatCard label="Duration" value={formatDuration(ride.duration_seconds)} />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {coordinates.length > 0 ? (
+          <RouteMap coordinates={coordinates} fitOnChange style={styles.map} />
+        ) : (
+          <ThemedView type="backgroundElement" style={styles.noRoute}>
+            <ThemedText type="default" themeColor="textSecondary">
+              No route recorded
+            </ThemedText>
+          </ThemedView>
+        )}
+
+        <View style={styles.statsPanel}>
+          <ThemedText type="smallBold">{ride.title ?? fallbackTitle}</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {new Date(ride.started_at).toLocaleString(undefined, {
+              weekday: 'long',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+            })}
+          </ThemedText>
+          <View style={styles.statsRow}>
+            <StatCard
+              label="Distance"
+              value={formatDistance(ride.distance_meters, units)}
+              unit={distanceUnitLabel(units)}
+            />
+            <StatCard label="Duration" value={formatDuration(ride.duration_seconds)} />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard
+              label="Avg Speed"
+              value={formatSpeed(ride.avg_speed_kmh, units)}
+              unit={speedUnitLabel(units)}
+            />
+            <StatCard
+              label="Max Speed"
+              value={formatSpeed(ride.max_speed_kmh, units)}
+              unit={speedUnitLabel(units)}
+            />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard label="Max Lean" value={formatLeanDeg(ride.lean_max_deg)} unit="deg" />
+            <StatCard label="Avg Lean" value={formatLeanDeg(ride.lean_avg_deg)} unit="deg" />
+          </View>
         </View>
-        <View style={styles.statsRow}>
-          <StatCard label="Avg Speed" value={formatSpeedKmh(ride.avg_speed_kmh)} unit="km/h" />
-          <StatCard label="Max Speed" value={formatSpeedKmh(ride.max_speed_kmh)} unit="km/h" />
-        </View>
-      </View>
+      </ScrollView>
     </ThemedView>
   );
 }
@@ -78,8 +131,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  scrollContent: {
+    flexGrow: 1,
+  },
   map: {
-    flex: 1.2,
+    height: 320,
+  },
+  noRoute: {
+    height: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   statsPanel: {
     padding: Spacing.three,

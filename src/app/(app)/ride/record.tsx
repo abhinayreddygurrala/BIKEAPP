@@ -1,24 +1,52 @@
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RouteMap } from '@/components/map/RouteMap';
+import { BikePickerSheet } from '@/components/ride/BikePickerSheet';
+import { RouteMap, type RouteMapHandle } from '@/components/map/RouteMap';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { StatCard } from '@/components/ui/StatCard';
 import { Spacing } from '@/constants/theme';
+import { useAuth } from '@/features/auth/AuthContext';
 import { requestRideTrackingPermissions, useRideRecorder } from '@/features/ride-tracking/useRideRecorder';
-import { formatDistanceKm, formatDuration, formatSpeedKmh } from '@/features/ride-tracking/rideMath';
+import {
+  distanceUnitLabel,
+  formatDistance,
+  formatDuration,
+  formatLeanDeg,
+  formatSpeed,
+  speedUnitLabel,
+} from '@/features/ride-tracking/rideMath';
+import { useTheme } from '@/hooks/use-theme';
+import { getBike } from '@/services/bikesService';
 
 type PermissionStep = 'checking' | 'need-foreground' | 'need-background' | 'foreground-only' | 'ready';
 
 export default function RecordRideScreen() {
   const [permissionStep, setPermissionStep] = useState<PermissionStep>('checking');
   const recorder = useRideRecorder();
+  const { units } = useAuth();
+  const theme = useTheme();
+  const mapRef = useRef<RouteMapHandle>(null);
+  const [bikeId, setBikeId] = useState<string | null>(null);
+  const [bikeName, setBikeName] = useState<string | null>(null);
+  const [bikePickerVisible, setBikePickerVisible] = useState(false);
+
+  const onSelectBike = (nextBikeId: string | null) => {
+    setBikeId(nextBikeId);
+    if (!nextBikeId) {
+      setBikeName(null);
+      return;
+    }
+    getBike(nextBikeId)
+      .then((bike) => setBikeName(bike?.name ?? null))
+      .catch(() => {});
+  };
 
   useKeepAwake(undefined, { suppressDeactivateWarnings: true });
 
@@ -92,6 +120,7 @@ export default function RecordRideScreen() {
   return (
     <ThemedView style={styles.flex}>
       <RouteMap
+        ref={mapRef}
         coordinates={recorder.coordinates}
         showsUserLocation
         followsUserLocation={isRecording}
@@ -106,20 +135,54 @@ export default function RecordRideScreen() {
             </ThemedView>
           ) : null}
 
+          <Pressable
+            onPress={() => mapRef.current?.recenterOnUser()}
+            hitSlop={8}
+            style={[styles.recenterButton, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="default" style={{ color: theme.accent }}>
+              ◎
+            </ThemedText>
+          </Pressable>
+
           <View style={styles.spacer} />
 
           <View style={styles.statsRow}>
-            <StatCard label="Distance" value={formatDistanceKm(recorder.stats.distanceMeters)} unit="km" />
+            <StatCard
+              label="Distance"
+              value={formatDistance(recorder.stats.distanceMeters, units)}
+              unit={distanceUnitLabel(units)}
+            />
             <StatCard label="Duration" value={formatDuration(recorder.stats.durationSeconds)} />
-            <StatCard label="Speed" value={formatSpeedKmh(recorder.stats.avgSpeedKmh)} unit="km/h avg" />
+            <StatCard
+              label="Speed"
+              value={formatSpeed(recorder.stats.avgSpeedKmh, units)}
+              unit={`${speedUnitLabel(units)} avg`}
+            />
           </View>
+          {isRecording || isPaused ? (
+            <View style={styles.statsRow}>
+              <StatCard label="Lean" value={formatLeanDeg(recorder.lean.currentDeg)} unit="deg" />
+              <StatCard label="Max Lean" value={formatLeanDeg(recorder.lean.maxDeg)} unit="deg" />
+            </View>
+          ) : null}
+
+          {isIdle ? (
+            <Pressable
+              onPress={() => setBikePickerVisible(true)}
+              style={[styles.bikeRow, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="small" themeColor="textSecondary">
+                Bike
+              </ThemedText>
+              <ThemedText type="default">{bikeName ?? 'No bike'}</ThemedText>
+            </Pressable>
+          ) : null}
 
           <View style={styles.controlsRow}>
             {isIdle ? (
               <PrimaryButton
                 label="Start Ride"
                 style={styles.flexButton}
-                onPress={() => recorder.start(null)}
+                onPress={() => recorder.start(bikeId)}
               />
             ) : null}
             {isRecording ? (
@@ -146,6 +209,13 @@ export default function RecordRideScreen() {
           ) : null}
         </SafeAreaView>
       </RouteMap>
+
+      <BikePickerSheet
+        visible={bikePickerVisible}
+        selectedBikeId={bikeId}
+        onSelect={onSelectBike}
+        onClose={() => setBikePickerVisible(false)}
+      />
     </ThemedView>
   );
 }
@@ -196,9 +266,27 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     padding: Spacing.two,
   },
+  recenterButton: {
+    position: 'absolute',
+    right: Spacing.three,
+    top: '38%',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   statsRow: {
     flexDirection: 'row',
     gap: Spacing.two,
+  },
+  bikeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
   },
   controlsRow: {
     flexDirection: 'row',

@@ -1,12 +1,18 @@
 import { supabase } from '@/lib/supabase';
 import {
+  createLocalRide,
+  deleteLocalRide,
+  finalizeLocalRide,
   getAllLocalRides,
   getLocalRide,
   getRidePoints,
   getUnsyncedRides,
   markRideSynced,
+  updateLocalRideFields,
+  updateLocalRideStats,
   type LocalRide,
 } from '@/features/ride-tracking/rideLocalDb';
+import { uuidv4 } from '@/lib/uuid';
 
 const POINTS_CHUNK_SIZE = 500;
 
@@ -37,6 +43,8 @@ export async function syncRide(localRide: LocalRide) {
       max_speed_kmh: localRide.max_speed_kmh,
       elevation_gain_m: localRide.elevation_gain_m,
       elevation_loss_m: localRide.elevation_loss_m,
+      lean_max_deg: localRide.lean_max_deg,
+      lean_avg_deg: localRide.lean_avg_deg,
       route_polyline: localRide.route_polyline,
     },
     { onConflict: 'id' }
@@ -107,6 +115,8 @@ export async function listRides(): Promise<RideSummary[]> {
       max_speed_kmh: remote.max_speed_kmh ?? 0,
       elevation_gain_m: remote.elevation_gain_m ?? 0,
       elevation_loss_m: remote.elevation_loss_m ?? 0,
+      lean_max_deg: remote.lean_max_deg ?? 0,
+      lean_avg_deg: remote.lean_avg_deg ?? 0,
       route_polyline: remote.route_polyline,
       status: 'stopped',
       synced: 1,
@@ -140,6 +150,8 @@ export async function getRideDetail(rideId: string): Promise<RideSummary | null>
       max_speed_kmh: remote.max_speed_kmh ?? 0,
       elevation_gain_m: remote.elevation_gain_m ?? 0,
       elevation_loss_m: remote.elevation_loss_m ?? 0,
+      lean_max_deg: remote.lean_max_deg ?? 0,
+      lean_avg_deg: remote.lean_avg_deg ?? 0,
       route_polyline: remote.route_polyline,
       status: 'stopped',
       synced: 1,
@@ -149,4 +161,49 @@ export async function getRideDetail(rideId: string): Promise<RideSummary | null>
 
   const local = await getLocalRide(rideId);
   return local ? { ...local, source: 'local' } : null;
+}
+
+/** Delete a ride everywhere it might exist. Safe to call on a ride that was never synced. */
+export async function deleteRide(ride: Pick<RideSummary, 'id' | 'source' | 'synced'>) {
+  if (ride.source === 'remote' || ride.synced) {
+    const { error } = await supabase.from('rides').delete().eq('id', ride.id);
+    if (error) throw error;
+  }
+  await deleteLocalRide(ride.id);
+}
+
+/** Edit a ride's title and/or bike. Distance/speed/route are GPS-derived and intentionally not editable. */
+export async function updateRide(
+  ride: Pick<RideSummary, 'id' | 'source' | 'synced'>,
+  updates: { title?: string | null; bike_id?: string | null }
+) {
+  if (ride.source === 'remote' || ride.synced) {
+    const { error } = await supabase.from('rides').update(updates).eq('id', ride.id);
+    if (error) throw error;
+  }
+  await updateLocalRideFields(ride.id, updates);
+}
+
+/** Log a ride that wasn't recorded live. Stats the app has no way to know (max speed, elevation, lean, route) are left blank. */
+export async function createManualRide(input: {
+  bikeId: string | null;
+  title: string | null;
+  startedAt: string;
+  endedAt: string;
+  distanceMeters: number;
+  durationSeconds: number;
+}): Promise<string> {
+  const id = uuidv4();
+  const avgSpeedKmh =
+    input.durationSeconds > 0 ? (input.distanceMeters / 1000 / (input.durationSeconds / 3600)) : 0;
+
+  await createLocalRide(id, input.bikeId, input.startedAt, input.title);
+  await updateLocalRideStats(id, {
+    distance_meters: input.distanceMeters,
+    duration_seconds: input.durationSeconds,
+    avg_speed_kmh: avgSpeedKmh,
+  });
+  await finalizeLocalRide(id, input.endedAt, '', 'stopped');
+
+  return id;
 }

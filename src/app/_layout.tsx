@@ -18,15 +18,12 @@ function RootNavigator() {
 
   if (isLoading) return null;
 
-  // TEMP: bypass auth guard to explore the UI while Supabase project
-  // creation is down. Revert to `!!session` / `!session` once a real
-  // backend is connected.
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={true}>
+      <Stack.Protected guard={!!session}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
-      <Stack.Protected guard={false}>
+      <Stack.Protected guard={!session}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
     </Stack>

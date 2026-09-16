@@ -52,6 +52,18 @@ const config: ExpoConfig = {
         isAndroidBackgroundLocationEnabled: true,
       },
     ],
+    [
+      "expo-sensors",
+      {
+        motionPermission: "BikeApp uses motion sensors to measure your bike's lean angle while recording a ride.",
+      },
+    ],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: "BikeApp uses your photo library to set a profile picture.",
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,

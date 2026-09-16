@@ -16,13 +16,20 @@ export type RouteMapProps = {
 
 export type RouteMapHandle = {
   fitToRoute: (animated?: boolean) => void;
+  /** Re-center the camera on the device's current location (the blue dot). */
+  recenterOnUser: (animated?: boolean) => void;
 };
+
+// Roughly a street-level zoom — tight enough to read a route, wide enough to
+// not feel jumpy while moving.
+const RECENTER_DELTA = 0.006;
 
 export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function RouteMap(
   { coordinates, style, showsUserLocation, followsUserLocation, fitOnChange, children },
   ref
 ) {
   const mapRef = useRef<MapView>(null);
+  const lastUserLocationRef = useRef<LatLng | null>(null);
   const theme = useTheme();
 
   const fitToRoute = (animated = true) => {
@@ -33,7 +40,16 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
     });
   };
 
-  useImperativeHandle(ref, () => ({ fitToRoute }));
+  const recenterOnUser = (animated = true) => {
+    const coordinate = lastUserLocationRef.current;
+    if (!coordinate) return;
+    mapRef.current?.animateToRegion(
+      { ...coordinate, latitudeDelta: RECENTER_DELTA, longitudeDelta: RECENTER_DELTA },
+      animated ? 400 : 0
+    );
+  };
+
+  useImperativeHandle(ref, () => ({ fitToRoute, recenterOnUser }));
 
   useEffect(() => {
     if (fitOnChange) fitToRoute(false);
@@ -49,7 +65,11 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
         userInterfaceStyle="dark"
         showsUserLocation={showsUserLocation}
         followsUserLocation={followsUserLocation}
-        showsCompass={false}>
+        showsCompass={false}
+        onUserLocationChange={(event) => {
+          const coordinate = event.nativeEvent.coordinate;
+          if (coordinate) lastUserLocationRef.current = coordinate;
+        }}>
         {coordinates.length > 1 ? (
           <Polyline coordinates={coordinates} strokeColor={theme.accent} strokeWidth={4} />
         ) : null}

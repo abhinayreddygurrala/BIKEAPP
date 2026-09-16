@@ -5,6 +5,9 @@ import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { supabase } from '@/lib/supabase';
+import { getProfile, updateProfile as updateProfileRequest, updateUnits, type Profile } from '@/services/profilesService';
+
+type Units = Profile['units'];
 
 // Lets the in-app browser sheet close itself once the OAuth redirect lands
 // back on our custom scheme, instead of staying open.
@@ -26,6 +29,11 @@ async function createSessionFromUrl(url: string) {
 type AuthContextValue = {
   session: Session | null;
   isLoading: boolean;
+  profile: Profile | null;
+  units: Units;
+  setUnits: (units: Units) => Promise<void>;
+  updateProfile: (updates: Partial<Pick<Profile, 'display_name' | 'bio' | 'avatar_url'>>) => Promise<void>;
+  changePassword: (newPassword: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
@@ -37,6 +45,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -51,10 +60,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) {
+      // Reset on sign-out so the next sign-in doesn't briefly show a
+      // previous account's profile before its own loads.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setProfile(null);
+      return;
+    }
+    getProfile(userId)
+      .then(setProfile)
+      .catch((e) => console.error('[AuthProvider] failed to load profile', e));
+  }, [session?.user.id]);
+
+  const units: Units = profile?.units ?? 'metric';
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
       isLoading,
+      profile,
+      units,
+      setUnits: async (nextUnits) => {
+        setProfile((prev) => (prev ? { ...prev, units: nextUnits } : prev));
+        const userId = session?.user.id;
+        if (!userId) return;
+        await updateUnits(userId, nextUnits);
+      },
+      updateProfile: async (updates) => {
+        setProfile((prev) => (prev ? { ...prev, ...updates } : prev));
+        const userId = session?.user.id;
+        if (!userId) return;
+        await updateProfileRequest(userId, updates);
+      },
+      changePassword: async (newPassword) => {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        return { error: error?.message ?? null };
+      },
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         return { error: error?.message ?? null };
@@ -87,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await supabase.auth.signOut();
       },
     }),
-    [session, isLoading]
+    [session, isLoading, profile, units]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
