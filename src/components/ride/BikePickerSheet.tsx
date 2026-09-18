@@ -1,8 +1,9 @@
+import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { DragSheet } from '@/components/ui/DragSheet';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes, type Bike } from '@/services/bikesService';
@@ -28,52 +29,37 @@ export function BikePickerSheet({ visible, selectedBikeId, onSelect, onClose }: 
   const options: { id: string | null; name: string }[] = [{ id: null, name: 'No bike' }, ...bikes];
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={[StyleSheet.absoluteFill, styles.backdrop]} onPress={onClose} />
-      <View style={styles.sheetWrap}>
-        <ThemedView type="backgroundElement" style={styles.sheet}>
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.title}>
-            Select Bike
-          </ThemedText>
-          {options.map((option) => {
-            const selected = option.id === selectedBikeId;
-            return (
-              <Pressable
-                key={option.id ?? 'none'}
-                onPress={() => {
-                  onSelect(option.id);
-                  onClose();
-                }}
-                style={[styles.row, selected && { backgroundColor: theme.backgroundSelected }]}>
-                <ThemedText type="default">{option.name}</ThemedText>
-                {selected ? (
-                  <ThemedText type="default" style={{ color: theme.accent }}>
-                    ✓
-                  </ThemedText>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </ThemedView>
-      </View>
-    </Modal>
+    <DragSheet visible={visible} onClose={onClose} contentStyle={styles.sheet}>
+      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.title}>
+        Select Bike
+      </ThemedText>
+      {options.map((option) => {
+        const selected = option.id === selectedBikeId;
+        return (
+          <Pressable
+            key={option.id ?? 'none'}
+            onPress={() => {
+              Haptics.selectionAsync();
+              onSelect(option.id);
+              onClose();
+            }}
+            style={[styles.row, selected && { backgroundColor: theme.backgroundSelected }]}>
+            <ThemedText type="default">{option.name}</ThemedText>
+            {selected ? (
+              <ThemedText type="default" style={{ color: theme.accent }}>
+                ✓
+              </ThemedText>
+            ) : null}
+          </Pressable>
+        );
+      })}
+    </DragSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  sheetWrap: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
   sheet: {
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
-    padding: Spacing.four,
     gap: Spacing.one,
-    paddingBottom: Spacing.six,
   },
   title: {
     marginBottom: Spacing.two,

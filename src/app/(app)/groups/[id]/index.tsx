@@ -1,7 +1,8 @@
 import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -40,12 +41,18 @@ export default function GroupChatScreen() {
   const [loaded, setLoaded] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  // Ids already mounted once, so a message doesn't replay its entrance
+  // animation when it scrolls out of the FlatList's window and back in.
+  const seenMessageIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!id) return;
     getGroup(id).then(setGroup);
     listMessages(id)
-      .then(setMessages)
+      .then((initial) => {
+        initial.forEach((m) => seenMessageIds.current.add(m.id));
+        setMessages(initial);
+      })
       .finally(() => setLoaded(true));
 
     const unsubscribe = subscribeToMessages(id, (message) => {
@@ -108,26 +115,9 @@ export default function GroupChatScreen() {
             keyExtractor={(item) => item.id}
             inverted
             contentContainerStyle={styles.list}
-            renderItem={({ item }) => {
-              const isMine = item.sender_id === myId;
-              return (
-                <View style={[styles.bubbleRow, isMine && styles.bubbleRowMine]}>
-                  <View
-                    style={[
-                      styles.bubble,
-                      { backgroundColor: isMine ? theme.accent : theme.backgroundElement },
-                    ]}>
-                    {item.kind === 'image' && item.media_url ? (
-                      <Image source={{ uri: item.media_url }} style={styles.bubbleImage} resizeMode="cover" />
-                    ) : (
-                      <ThemedText type="default" style={isMine ? { color: theme.accentText } : undefined}>
-                        {item.content}
-                      </ThemedText>
-                    )}
-                  </View>
-                </View>
-              );
-            }}
+            renderItem={({ item }) => (
+              <MessageBubble item={item} isMine={item.sender_id === myId} seenIds={seenMessageIds.current} />
+            )}
           />
         )}
 
@@ -155,6 +145,44 @@ export default function GroupChatScreen() {
         </View>
       </SafeAreaView>
     </ThemedView>
+  );
+}
+
+function MessageBubble({
+  item,
+  isMine,
+  seenIds,
+}: {
+  item: GroupMessage;
+  isMine: boolean;
+  seenIds: Set<string>;
+}) {
+  const theme = useTheme();
+  const isNew = !seenIds.has(item.id);
+  const entering = useMemo(() => (isNew ? FadeIn.duration(200) : undefined), [isNew]);
+  const layout = useMemo(() => LinearTransition.duration(200), []);
+
+  useEffect(() => {
+    seenIds.add(item.id);
+    // Only needs to run once per message id — marks it seen after its first mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
+  return (
+    <Animated.View
+      entering={entering}
+      layout={layout}
+      style={[styles.bubbleRow, isMine && styles.bubbleRowMine]}>
+      <View style={[styles.bubble, { backgroundColor: isMine ? theme.accent : theme.backgroundElement }]}>
+        {item.kind === 'image' && item.media_url ? (
+          <Image source={{ uri: item.media_url }} style={styles.bubbleImage} resizeMode="cover" />
+        ) : (
+          <ThemedText type="default" style={isMine ? { color: theme.accentText } : undefined}>
+            {item.content}
+          </ThemedText>
+        )}
+      </View>
+    </Animated.View>
   );
 }
 
