@@ -1,7 +1,8 @@
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { DragSheet } from '@/components/ui/DragSheet';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -32,64 +33,46 @@ export function SelectSheet({
   const resolvedSections = sections ?? [{ options: options ?? [] }];
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={[StyleSheet.absoluteFill, styles.backdrop]} onPress={onClose} />
-      <View style={styles.sheetWrap}>
-        <ThemedView type="backgroundElement" style={styles.sheet}>
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.title}>
-            {title}
-          </ThemedText>
-          <ScrollView>
-            {resolvedSections.map((section, sectionIndex) => (
-              <View key={section.title ?? sectionIndex}>
-                {section.title ? (
-                  <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionTitle}>
-                    {section.title}
-                  </ThemedText>
-                ) : null}
-                {section.options.map((option) => {
-                  const isSelected = option === selected;
-                  return (
-                    <Pressable
-                      key={option}
-                      onPress={() => {
-                        onSelect(option);
-                        onClose();
-                      }}
-                      style={[styles.row, isSelected && { backgroundColor: theme.backgroundSelected }]}>
-                      <ThemedText type="default">{option}</ThemedText>
-                      {isSelected ? (
-                        <ThemedText type="default" style={{ color: theme.accent }}>
-                          ✓
-                        </ThemedText>
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
-            ))}
-          </ScrollView>
-        </ThemedView>
-      </View>
-    </Modal>
+    <DragSheet visible={visible} onClose={onClose}>
+      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.title}>
+        {title}
+      </ThemedText>
+      <ScrollView>
+        {resolvedSections.map((section, sectionIndex) => (
+          <View key={section.title ?? sectionIndex}>
+            {section.title ? (
+              <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionTitle}>
+                {section.title}
+              </ThemedText>
+            ) : null}
+            {section.options.map((option) => {
+              const isSelected = option === selected;
+              return (
+                <Pressable
+                  key={option}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    onSelect(option);
+                    onClose();
+                  }}
+                  style={[styles.row, isSelected && { backgroundColor: theme.backgroundSelected }]}>
+                  <ThemedText type="default">{option}</ThemedText>
+                  {isSelected ? (
+                    <ThemedText type="default" style={{ color: theme.accent }}>
+                      ✓
+                    </ThemedText>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </ScrollView>
+    </DragSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  sheetWrap: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
-    padding: Spacing.four,
-    paddingBottom: Spacing.six,
-    maxHeight: '75%',
-  },
   title: {
     marginBottom: Spacing.two,
   },

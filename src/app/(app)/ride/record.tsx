@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
@@ -79,10 +80,16 @@ export default function RecordRideScreen() {
   const handleStop = async () => {
     const finishedRideId = await recorder.stop();
     if (finishedRideId) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace({ pathname: '/(app)/ride/[id]', params: { id: finishedRideId } });
     } else {
       router.back();
     }
+  };
+
+  const handleStart = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    recorder.start(bikeId);
   };
 
   if (permissionStep === 'checking') {
@@ -179,11 +186,7 @@ export default function RecordRideScreen() {
 
           <View style={styles.controlsRow}>
             {isIdle ? (
-              <PrimaryButton
-                label="Start Ride"
-                style={styles.flexButton}
-                onPress={() => recorder.start(bikeId)}
-              />
+              <PrimaryButton label="Start Ride" style={styles.flexButton} onPress={handleStart} />
             ) : null}
             {isRecording ? (
               <>
