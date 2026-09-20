@@ -13,6 +13,7 @@ import * as Haptics from 'expo-haptics';
 
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 
@@ -36,6 +37,7 @@ export type DragSheetProps = {
 };
 
 export function DragSheet({ visible, onClose, children, contentStyle }: DragSheetProps) {
+  const theme = useTheme();
   const [mounted, setMounted] = useState(visible);
   const translateY = useSharedValue(SCREEN_HEIGHT);
   const context = useSharedValue(0);
@@ -105,6 +107,7 @@ export function DragSheet({ visible, onClose, children, contentStyle }: DragShee
         <GestureDetector gesture={pan}>
           <Animated.View style={sheetStyle}>
             <ThemedView type="backgroundElement" style={[styles.sheetInner, contentStyle]}>
+              <View style={[styles.handle, { backgroundColor: theme.textSecondary }]} />
               {children}
             </ThemedView>
           </Animated.View>
@@ -126,7 +129,16 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: Spacing.four,
     borderTopRightRadius: Spacing.four,
     padding: Spacing.four,
+    paddingTop: Spacing.two,
     paddingBottom: Spacing.six,
     maxHeight: '75%',
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 36,
+    height: 5,
+    borderRadius: 3,
+    opacity: 0.4,
+    marginBottom: Spacing.three,
   },
 });

@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { MovingLetters } from '@/components/ui/MovingLetters';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -47,7 +48,7 @@ export default function SignUpScreen() {
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ThemedView style={styles.content}>
-            <ThemedText type="title">BikeApp</ThemedText>
+            <MovingLetters text="BikeApp" style={[styles.title, { color: theme.text }]} />
             <ThemedText type="default" themeColor="textSecondary" style={styles.subtitle}>
               Create an account to start recording rides.
             </ThemedText>
@@ -123,6 +124,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: Spacing.four,
     gap: Spacing.three,
+  },
+  title: {
+    fontSize: 48,
+    fontWeight: 600,
+    lineHeight: 52,
+    letterSpacing: -0.5,
   },
   subtitle: {
     marginBottom: Spacing.three,

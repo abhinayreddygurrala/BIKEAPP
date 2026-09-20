@@ -1,5 +1,5 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useColorScheme } from 'react-native';
+import { Platform, useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 
@@ -9,7 +9,11 @@ export default function TabsLayout() {
 
   return (
     <NativeTabs
-      backgroundColor={colors.background}
+      // Real native iOS blur material instead of a flat fill — Android has
+      // no blurEffect, so it keeps an opaque background there.
+      blurEffect="systemChromeMaterialDark"
+      backgroundColor={Platform.OS === 'android' ? colors.background : undefined}
+      shadowColor={colors.border}
       indicatorColor={colors.backgroundElement}
       tintColor={colors.accent}
       labelStyle={{ selected: { color: colors.accent } }}>
