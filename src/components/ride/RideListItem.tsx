@@ -3,7 +3,6 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 import { distanceUnitLabel, formatDistance, formatDuration, type Units } from '@/features/ride-tracking/rideMath';
 
 export type RideListItemProps = {
@@ -12,7 +11,7 @@ export type RideListItemProps = {
   distanceMeters: number | null;
   durationSeconds: number | null;
   units: Units;
-  pendingSync?: boolean;
+  pinned?: boolean;
   onPress?: () => void;
 };
 
@@ -22,10 +21,9 @@ export function RideListItem({
   distanceMeters,
   durationSeconds,
   units,
-  pendingSync,
+  pinned,
   onPress,
 }: RideListItemProps) {
-  const theme = useTheme();
   const date = new Date(startedAt);
 
   return (
@@ -35,11 +33,7 @@ export function RideListItem({
           <ThemedText type="smallBold" numberOfLines={1} style={styles.title}>
             {title}
           </ThemedText>
-          {pendingSync ? (
-            <ThemedText type="small" style={{ color: theme.textSecondary }}>
-              Pending sync
-            </ThemedText>
-          ) : null}
+          {pinned ? <ThemedText type="default">📌</ThemedText> : null}
         </View>
         <ThemedText type="small" themeColor="textSecondary">
           {date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}

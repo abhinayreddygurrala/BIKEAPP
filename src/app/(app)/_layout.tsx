@@ -19,6 +19,10 @@ export default function AppLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen
+        name="records"
+        options={{ headerShown: true, title: '🏆 Records', headerBackTitle: 'Rides' }}
+      />
       <Stack.Screen name="ride/record" options={{ presentation: 'fullScreenModal' }} />
       <Stack.Screen
         name="ride/[id]"
@@ -60,38 +64,30 @@ export default function AppLayout() {
         options={{ headerShown: true, title: 'Bike', headerBackTitle: 'My Bikes' }}
       />
       <Stack.Screen
+        name="maintenance/new-service"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Log Service',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
+        name="maintenance/new-fuel"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Log Fuel-Up',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
         name="settings/account"
         options={{ headerShown: true, title: 'Account', headerBackTitle: 'Settings' }}
       />
       <Stack.Screen
         name="settings/profile-picture"
         options={{ headerShown: true, title: 'Profile Picture', headerBackTitle: 'Settings' }}
-      />
-      <Stack.Screen
-        name="settings/change-password"
-        options={{
-          presentation: 'modal',
-          headerShown: true,
-          title: 'Change Password',
-          headerLeft: CancelHeaderButton,
-        }}
-      />
-      <Stack.Screen
-        name="groups/new"
-        options={{
-          presentation: 'modal',
-          headerShown: true,
-          title: 'New Group',
-          headerLeft: CancelHeaderButton,
-        }}
-      />
-      <Stack.Screen
-        name="groups/[id]/index"
-        options={{ headerShown: true, title: 'Group', headerBackTitle: 'Groups' }}
-      />
-      <Stack.Screen
-        name="groups/[id]/settings"
-        options={{ headerShown: true, title: 'Group Settings' }}
       />
     </Stack>
   );

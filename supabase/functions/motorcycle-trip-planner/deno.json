@@ -1,6 +1,0 @@
-{
-  "imports": {
-    "@supabase/server": "npm:@supabase/server@^1",
-    "@google/genai": "npm:@google/genai@2.21.0"
-  }
-}

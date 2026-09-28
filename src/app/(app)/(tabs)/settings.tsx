@@ -1,4 +1,5 @@
 import { Link, router } from 'expo-router';
+import { useState } from 'react';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -6,14 +7,29 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { useTheme } from '@/hooks/use-theme';
+import { exportAllData } from '@/services/exportService';
 
 const AVATAR_SIZE = 44;
 
 export default function SettingsScreen() {
-  const { session, profile, units, setUnits, signOut } = useAuth();
+  const { profile, units, setUnits } = useSettings();
   const theme = useTheme();
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const onExport = async () => {
+    setExportError(null);
+    setExporting(true);
+    try {
+      await exportAllData();
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Failed to export data');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <ThemedView style={styles.flex}>
@@ -30,13 +46,6 @@ export default function SettingsScreen() {
             )}
           </Pressable>
         </View>
-
-        <ThemedView type="backgroundElement" style={styles.card}>
-          <ThemedText type="statLabel" themeColor="textSecondary">
-            Signed in as
-          </ThemedText>
-          <ThemedText type="default">{session?.user.email}</ThemedText>
-        </ThemedView>
 
         <Link href="/(app)/settings/account" asChild>
           <PrimaryButton label="Account" variant="muted" style={styles.leftAlignedButton} />
@@ -70,7 +79,12 @@ export default function SettingsScreen() {
           <PrimaryButton label="🏍️ My Bikes" variant="muted" />
         </Link>
 
-        <PrimaryButton label="Sign Out" variant="danger" onPress={signOut} />
+        {exportError ? (
+          <ThemedText type="small" style={{ color: theme.danger }}>
+            {exportError}
+          </ThemedText>
+        ) : null}
+        <PrimaryButton label="Export My Data" variant="muted" onPress={onExport} loading={exporting} />
       </SafeAreaView>
     </ThemedView>
   );

@@ -17,11 +17,50 @@ const moto = {
   backgroundElement: '#1C1C1F',
   backgroundSelected: '#26262B',
   textSecondary: '#9A9AA2',
-  border: '#2E2E33',
+  // A soft, low-contrast hairline — Apple-style surfaces separate with a
+  // barely-there border plus a shadow, never a hard line.
+  border: 'rgba(245,245,247,0.08)',
   accent: '#FF4B1F',
   accentText: '#FFFFFF',
   danger: '#FF453A',
   success: '#32D74B',
+} as const;
+
+// Elevation presets for surfaces that should read as sitting above the
+// background (cards, sheets, buttons) rather than flat-printed on it.
+// iOS reads shadowColor/Offset/Opacity/Radius; Android reads elevation.
+export const Shadows = {
+  card: Platform.select({
+    ios: {
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.28,
+      shadowRadius: 16,
+    },
+    default: { elevation: 6 },
+  }),
+  raised: Platform.select({
+    ios: {
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.22,
+      shadowRadius: 6,
+    },
+    default: { elevation: 3 },
+  }),
+  // Tints the shadow with the pressable's own color (e.g. the accent
+  // button) instead of plain black — reads as a soft glow, a common
+  // premium/iOS detail on filled buttons.
+  glow: (color: string) =>
+    Platform.select({
+      ios: {
+        shadowColor: color,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.35,
+        shadowRadius: 12,
+      },
+      default: { elevation: 4 },
+    }),
 } as const;
 
 export const Colors = {
