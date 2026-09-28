@@ -9,7 +9,12 @@ import {
   updateLocalRideStats,
   type LocalRidePoint,
 } from '@/features/ride-tracking/rideLocalDb';
-import { computeRideStats, encodeRoutePolyline, type RideStats } from '@/features/ride-tracking/rideMath';
+import {
+  computeCurveRecords,
+  computeRideStats,
+  encodeRoutePolyline,
+  type RideStats,
+} from '@/features/ride-tracking/rideMath';
 import { RIDE_TRACKING_TASK } from '@/features/ride-tracking/rideTrackingTask';
 import { useLeanAngleTracker } from '@/features/ride-tracking/useLeanAngleTracker';
 import { uuidv4 } from '@/lib/uuid';
@@ -25,6 +30,13 @@ const EMPTY_STATS: RideStats = {
   maxSpeedKmh: 0,
   elevationGainM: 0,
   elevationLossM: 0,
+  stoppedSeconds: 0,
+  accel0To60Seconds: null,
+  accel0To100Seconds: null,
+  accel0To150Seconds: null,
+  rolling60To130Seconds: null,
+  dragEighthMileSeconds: null,
+  dragQuarterMileSeconds: null,
 };
 
 const locationTaskOptions: Location.LocationTaskOptions = {
@@ -130,6 +142,9 @@ export function useRideRecorder() {
     const finalPoints = await getRidePoints(rideId);
     const finalStats = computeRideStats(finalPoints);
     const routePolyline = encodeRoutePolyline(finalPoints);
+    // Cross-reference the sensor-detected curve events against GPS to get
+    // fastest-speed and longest-distance per curve, not just steepest angle.
+    const curveRecords = computeCurveRecords(lean.getCurveEvents(), finalPoints);
 
     await updateLocalRideStats(rideId, {
       distance_meters: finalStats.distanceMeters,
@@ -140,6 +155,23 @@ export function useRideRecorder() {
       elevation_loss_m: finalStats.elevationLossM,
       lean_max_deg: lean.maxDeg,
       lean_avg_deg: lean.avgDeg,
+      stopped_seconds: finalStats.stoppedSeconds,
+      accel_0_60_seconds: finalStats.accel0To60Seconds,
+      accel_0_100_seconds: finalStats.accel0To100Seconds,
+      accel_0_150_seconds: finalStats.accel0To150Seconds,
+      rolling_60_130_seconds: finalStats.rolling60To130Seconds,
+      drag_eighth_mile_seconds: finalStats.dragEighthMileSeconds,
+      drag_quarter_mile_seconds: finalStats.dragQuarterMileSeconds,
+      curve_count: curveRecords.curveCount,
+      steepest_lean_left_deg: curveRecords.steepestLeftDeg,
+      steepest_lean_right_deg: curveRecords.steepestRightDeg,
+      fastest_curve_left_kmh: curveRecords.fastestLeftKmh,
+      fastest_curve_right_kmh: curveRecords.fastestRightKmh,
+      longest_curve_left_m: curveRecords.longestLeftM,
+      longest_curve_right_m: curveRecords.longestRightM,
+      wheelie_count: lean.wheelieCount,
+      longest_wheelie_seconds: lean.longestWheelieSeconds,
+      peak_lateral_g: lean.peakG,
     });
     await finalizeLocalRide(rideId, new Date().toISOString(), routePolyline, 'stopped');
     await setActiveRideId(null);
@@ -149,7 +181,16 @@ export function useRideRecorder() {
     setStatus('stopped');
 
     return rideId;
-  }, [rideId, stopPolling, lean.maxDeg, lean.avgDeg]);
+  }, [
+    rideId,
+    stopPolling,
+    lean.maxDeg,
+    lean.avgDeg,
+    lean.wheelieCount,
+    lean.longestWheelieSeconds,
+    lean.peakG,
+    lean.getCurveEvents,
+  ]);
 
   const coordinates = useMemo(
     () => points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
@@ -162,7 +203,17 @@ export function useRideRecorder() {
     points,
     coordinates,
     stats,
-    lean: { currentDeg: lean.currentDeg, maxDeg: lean.maxDeg, avgDeg: lean.avgDeg },
+    lean: {
+      currentDeg: lean.currentDeg,
+      maxDeg: lean.maxDeg,
+      avgDeg: lean.avgDeg,
+      curveCount: lean.curveCount,
+      steepestLeanLeftDeg: lean.steepestLeanLeftDeg,
+      steepestLeanRightDeg: lean.steepestLeanRightDeg,
+      wheelieCount: lean.wheelieCount,
+      longestWheelieSeconds: lean.longestWheelieSeconds,
+      peakG: lean.peakG,
+    },
     start,
     pause,
     resume,

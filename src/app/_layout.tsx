@@ -3,7 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { AuthProvider, useAuth } from '@/features/auth/AuthContext';
+import { SettingsProvider, useSettings } from '@/features/settings/SettingsContext';
 // Side-effect import: registers the background location task at app
 // startup, before any screen can call startLocationUpdatesAsync.
 import '@/features/ride-tracking/rideTrackingTask';
@@ -11,7 +11,7 @@ import '@/features/ride-tracking/rideTrackingTask';
 SplashScreen.preventAutoHideAsync();
 
 function RootNavigator() {
-  const { session, isLoading } = useAuth();
+  const { isLoading } = useSettings();
 
   useEffect(() => {
     if (!isLoading) SplashScreen.hideAsync();
@@ -21,12 +21,7 @@ function RootNavigator() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={!!session}>
-        <Stack.Screen name="(app)" />
-      </Stack.Protected>
-      <Stack.Protected guard={!session}>
-        <Stack.Screen name="(auth)" />
-      </Stack.Protected>
+      <Stack.Screen name="(app)" />
     </Stack>
   );
 }
@@ -35,9 +30,9 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={DarkTheme}>
-        <AuthProvider>
+        <SettingsProvider>
           <RootNavigator />
-        </AuthProvider>
+        </SettingsProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

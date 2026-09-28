@@ -5,28 +5,45 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'reac
 import { RouteMap } from '@/components/map/RouteMap';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { StatCard } from '@/components/ui/StatCard';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import {
   decodeRoutePolyline,
   distanceUnitLabel,
   formatDistance,
   formatDuration,
+  formatG,
   formatLeanDeg,
+  formatSeconds,
   formatSpeed,
   speedUnitLabel,
 } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
+import { shareRide } from '@/services/exportService';
 import { getRideDetail, type RideSummary } from '@/services/ridesService';
 
 export default function RideDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { units } = useAuth();
+  const { units } = useSettings();
   const theme = useTheme();
   const [ride, setRide] = useState<RideSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+
+  const onShare = async () => {
+    if (!ride) return;
+    setSharing(true);
+    try {
+      await shareRide(ride, units);
+    } catch (e) {
+      console.error('[RideDetailScreen] failed to share ride', e);
+    } finally {
+      setSharing(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -118,6 +135,88 @@ export default function RideDetailScreen() {
             <StatCard label="Max Lean" value={formatLeanDeg(ride.lean_max_deg)} unit="deg" />
             <StatCard label="Avg Lean" value={formatLeanDeg(ride.lean_avg_deg)} unit="deg" />
           </View>
+          <View style={styles.statsRow}>
+            <StatCard label="Stopped Time" value={formatDuration(ride.stopped_seconds)} />
+            <StatCard label="Peak Lateral G" value={formatG(ride.peak_lateral_g)} unit="g" />
+          </View>
+
+          <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
+            Curve Records
+          </ThemedText>
+          <View style={styles.statsRow}>
+            <StatCard label="Curves" value={String(ride.curve_count ?? 0)} />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard
+              label="Fastest Left"
+              value={formatSpeed(ride.fastest_curve_left_kmh, units)}
+              unit={speedUnitLabel(units)}
+            />
+            <StatCard
+              label="Fastest Right"
+              value={formatSpeed(ride.fastest_curve_right_kmh, units)}
+              unit={speedUnitLabel(units)}
+            />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard label="Steepest Left" value={formatLeanDeg(ride.steepest_lean_left_deg)} unit="deg" />
+            <StatCard label="Steepest Right" value={formatLeanDeg(ride.steepest_lean_right_deg)} unit="deg" />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard
+              label="Longest Left"
+              value={formatDistance(ride.longest_curve_left_m, units)}
+              unit={distanceUnitLabel(units)}
+            />
+            <StatCard
+              label="Longest Right"
+              value={formatDistance(ride.longest_curve_right_m, units)}
+              unit={distanceUnitLabel(units)}
+            />
+          </View>
+
+          <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
+            Acceleration Runs
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            From stop and Drag only count if you start from a complete stop.
+          </ThemedText>
+          <View style={styles.statsRow}>
+            <StatCard label="From Stop · 0-60 mph" value={formatSeconds(ride.accel_0_60_seconds)} unit="s" />
+            <StatCard label="From Stop · 0-100 mph" value={formatSeconds(ride.accel_0_100_seconds)} unit="s" />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard label="From Stop · 0-150 mph" value={formatSeconds(ride.accel_0_150_seconds)} unit="s" />
+            <StatCard label="Rolling · 60-130 mph" value={formatSeconds(ride.rolling_60_130_seconds)} unit="s" />
+          </View>
+          <View style={styles.statsRow}>
+            <StatCard
+              label="Drag · From Stop · 1/8 mi"
+              value={formatSeconds(ride.drag_eighth_mile_seconds)}
+              unit="s"
+            />
+            <StatCard
+              label="Drag · From Stop · 1/4 mi"
+              value={formatSeconds(ride.drag_quarter_mile_seconds)}
+              unit="s"
+            />
+          </View>
+
+          <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
+            Wheelies
+          </ThemedText>
+          <View style={styles.statsRow}>
+            <StatCard label="Count" value={String(ride.wheelie_count ?? 0)} />
+            <StatCard label="Longest" value={formatSeconds(ride.longest_wheelie_seconds)} unit="s" />
+          </View>
+
+          <PrimaryButton
+            label="Share This Ride"
+            variant="muted"
+            onPress={onShare}
+            loading={sharing}
+            style={styles.sectionLabel}
+          />
         </View>
       </ScrollView>
     </ThemedView>
@@ -149,5 +248,8 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     gap: Spacing.two,
+  },
+  sectionLabel: {
+    marginTop: Spacing.two,
   },
 });

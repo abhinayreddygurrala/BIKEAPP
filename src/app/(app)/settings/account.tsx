@@ -1,4 +1,3 @@
-import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,12 +6,12 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function AccountScreen() {
   const theme = useTheme();
-  const { profile, updateProfile } = useAuth();
+  const { profile, updateProfile } = useSettings();
 
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
@@ -70,10 +69,6 @@ export default function AccountScreen() {
         />
 
         <PrimaryButton label="Save" onPress={onSave} loading={saving} style={styles.saveButton} />
-
-        <Link href="/(app)/settings/change-password" asChild>
-          <PrimaryButton label="Change Password" variant="muted" />
-        </Link>
       </SafeAreaView>
     </ThemedView>
   );

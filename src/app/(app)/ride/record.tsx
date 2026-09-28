@@ -7,19 +7,19 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BikePickerSheet } from '@/components/ride/BikePickerSheet';
+import { LeanAngleGauge } from '@/components/ride/LeanAngleGauge';
 import { RouteMap, type RouteMapHandle } from '@/components/map/RouteMap';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { StatCard } from '@/components/ui/StatCard';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { requestRideTrackingPermissions, useRideRecorder } from '@/features/ride-tracking/useRideRecorder';
 import {
   distanceUnitLabel,
   formatDistance,
   formatDuration,
-  formatLeanDeg,
   formatSpeed,
   speedUnitLabel,
 } from '@/features/ride-tracking/rideMath';
@@ -31,7 +31,7 @@ type PermissionStep = 'checking' | 'need-foreground' | 'need-background' | 'fore
 export default function RecordRideScreen() {
   const [permissionStep, setPermissionStep] = useState<PermissionStep>('checking');
   const recorder = useRideRecorder();
-  const { units } = useAuth();
+  const { units } = useSettings();
   const theme = useTheme();
   const mapRef = useRef<RouteMapHandle>(null);
   const [bikeId, setBikeId] = useState<string | null>(null);
@@ -153,6 +153,13 @@ export default function RecordRideScreen() {
 
           <View style={styles.spacer} />
 
+          {isRecording || isPaused ? (
+            <LeanAngleGauge
+              currentDeg={recorder.lean.currentDeg}
+              maxLeftDeg={recorder.lean.steepestLeanLeftDeg}
+              maxRightDeg={recorder.lean.steepestLeanRightDeg}
+            />
+          ) : null}
           <View style={styles.statsRow}>
             <StatCard
               label="Distance"
@@ -166,12 +173,6 @@ export default function RecordRideScreen() {
               unit={`${speedUnitLabel(units)} avg`}
             />
           </View>
-          {isRecording || isPaused ? (
-            <View style={styles.statsRow}>
-              <StatCard label="Lean" value={formatLeanDeg(recorder.lean.currentDeg)} unit="deg" />
-              <StatCard label="Max Lean" value={formatLeanDeg(recorder.lean.maxDeg)} unit="deg" />
-            </View>
-          ) : null}
 
           {isIdle ? (
             <Pressable

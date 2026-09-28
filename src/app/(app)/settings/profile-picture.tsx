@@ -6,9 +6,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { useTheme } from '@/hooks/use-theme';
-import { uploadAvatar } from '@/services/profilesService';
 
 // Loaded via require() inside try/catch, not a static import: expo-router
 // evaluates every screen's module while building the route tree at startup,
@@ -29,7 +28,7 @@ const AVATAR_SIZE = 160;
 
 export default function ProfilePictureScreen() {
   const theme = useTheme();
-  const { session, profile, updateProfile } = useAuth();
+  const { profile, setAvatar } = useSettings();
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,13 +58,9 @@ export default function ProfilePictureScreen() {
     const pickedUri = result.assets[0].uri;
     setLocalUri(pickedUri);
 
-    const userId = session?.user.id;
-    if (!userId) return;
-
     setUploading(true);
     try {
-      const publicUrl = await uploadAvatar(userId, pickedUri);
-      await updateProfile({ avatar_url: publicUrl });
+      await setAvatar(pickedUri);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to upload photo');
       setLocalUri(null);

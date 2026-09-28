@@ -1,5 +1,5 @@
 import * as Location from 'expo-location';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,7 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { askTripPlanner } from '@/services/tripPlannerService';
+import { askTripPlanner, isTripPlannerAvailable } from '@/services/tripPlannerService';
 
 type Coord = { latitude: number; longitude: number };
 
@@ -25,6 +25,11 @@ export default function NavigationScreen() {
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiAvailable, setAiAvailable] = useState(true);
+
+  useEffect(() => {
+    isTripPlannerAvailable().then(setAiAvailable);
+  }, []);
 
   const inputStyle = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }];
 
@@ -117,7 +122,9 @@ export default function NavigationScreen() {
             Ask About a Place
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            Scenic roads and rider-worthy stops, e.g. &ldquo;best roads and places to visit near Seattle&rdquo;
+            {aiAvailable
+              ? 'Scenic roads and rider-worthy stops, e.g. “best roads and places to visit near Seattle”'
+              : 'Needs Apple Intelligence turned on for this phone (Settings → Apple Intelligence & Siri).'}
           </ThemedText>
           <View style={styles.row}>
             <TextInput
@@ -125,11 +132,18 @@ export default function NavigationScreen() {
               onChangeText={setAiQuery}
               placeholder="Ask about a place"
               placeholderTextColor={theme.textSecondary}
+              editable={aiAvailable}
               style={[inputStyle, styles.flexInput]}
               onSubmitEditing={onAskAi}
               returnKeyType="search"
             />
-            <PrimaryButton label="Ask" onPress={onAskAi} loading={aiLoading} style={styles.goButton} />
+            <PrimaryButton
+              label="Ask"
+              onPress={onAskAi}
+              loading={aiLoading}
+              disabled={!aiAvailable}
+              style={styles.goButton}
+            />
           </View>
 
           {aiLoading ? <ActivityIndicator color="#fff" style={styles.aiLoading} /> : null}

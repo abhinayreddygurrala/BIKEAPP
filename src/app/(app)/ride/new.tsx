@@ -8,7 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { distanceToMeters, distanceUnitLabel } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { getBike } from '@/services/bikesService';
@@ -18,7 +18,7 @@ const now = new Date();
 
 export default function NewManualRideScreen() {
   const theme = useTheme();
-  const { units } = useAuth();
+  const { units } = useSettings();
 
   const [title, setTitle] = useState('');
   const [bikeId, setBikeId] = useState<string | null>(null);

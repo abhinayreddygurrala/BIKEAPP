@@ -9,14 +9,14 @@ import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { StatCard } from '@/components/ui/StatCard';
 import { RideListItem } from '@/components/ride/RideListItem';
 import { Spacing } from '@/constants/theme';
-import { useAuth } from '@/features/auth/AuthContext';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { computeAggregateStats, distanceUnitLabel, formatDistance, formatDuration } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes, type Bike } from '@/services/bikesService';
-import { listRides, syncPendingRides, type RideSummary } from '@/services/ridesService';
+import { listRides, type RideSummary } from '@/services/ridesService';
 
 export default function RidesScreen() {
-  const { units } = useAuth();
+  const { units } = useSettings();
   const [rides, setRides] = useState<RideSummary[]>([]);
   const [bikes, setBikes] = useState<Bike[]>([]);
   const [bikeFilter, setBikeFilter] = useState<string | null>(null);
@@ -24,11 +24,6 @@ export default function RidesScreen() {
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      await syncPendingRides();
-    } catch {
-      // Offline or sync failed — local rides still show below, marked pending.
-    }
     try {
       const [ridesResult, bikesResult] = await Promise.all([listRides(), listBikes()]);
       setRides(ridesResult);
@@ -65,9 +60,16 @@ export default function RidesScreen() {
   return (
     <ThemedView style={styles.flex}>
       <SafeAreaView style={styles.content}>
-        <ThemedText type="title" style={styles.title}>
-          Rides
-        </ThemedText>
+        <View style={styles.titleRow}>
+          <ThemedText type="title" style={styles.title}>
+            Rides
+          </ThemedText>
+          <Pressable onPress={() => router.push('/(app)/records')} hitSlop={8}>
+            <ThemedText type="default" themeColor="accent">
+              🏆 Records
+            </ThemedText>
+          </Pressable>
+        </View>
 
         {bikes.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
@@ -85,13 +87,14 @@ export default function RidesScreen() {
 
         {loaded && rides.length > 0 ? (
           <View style={styles.summaryRow}>
-            <StatCard label="Rides" value={String(summary.rideCount)} />
+            <StatCard compact label="Rides" value={String(summary.rideCount)} />
             <StatCard
+              compact
               label="Distance"
               value={formatDistance(summary.totalDistanceMeters, units)}
               unit={distanceUnitLabel(units)}
             />
-            <StatCard label="Time" value={formatDuration(summary.totalDurationSeconds)} />
+            <StatCard compact label="Time" value={formatDuration(summary.totalDurationSeconds)} />
           </View>
         ) : null}
 
@@ -101,6 +104,7 @@ export default function RidesScreen() {
           <FlatList
             data={filteredRides}
             keyExtractor={(item) => item.id}
+            style={styles.flatList}
             contentContainerStyle={filteredRides.length === 0 ? styles.emptyList : styles.list}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
             renderItem={({ item }) => (
@@ -110,7 +114,6 @@ export default function RidesScreen() {
                 distanceMeters={item.distance_meters}
                 durationSeconds={item.duration_seconds}
                 units={units}
-                pendingSync={item.source === 'local' && !item.synced}
                 onPress={() => router.push({ pathname: '/(app)/ride/[id]', params: { id: item.id } })}
               />
             )}
@@ -162,11 +165,19 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.four,
     gap: Spacing.three,
   },
-  title: {
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: Spacing.one,
   },
+  title: {},
   filterScroll: {
     flexGrow: 0,
+    flexShrink: 0,
+  },
+  flatList: {
+    flex: 1,
   },
   chip: {
     borderRadius: Spacing.four,

@@ -29,8 +29,18 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
   ref
 ) {
   const mapRef = useRef<MapView>(null);
+  // Fallback only — react-native-maps' own "blue dot" location listener runs
+  // on its own, lower-accuracy cadence, separate from the expo-location
+  // BestForNavigation task actually recording the ride. Recentering on it
+  // (as this used to) could land you noticeably off from where the route
+  // line itself says you are.
   const lastUserLocationRef = useRef<LatLng | null>(null);
+  const lastRouteCoordinateRef = useRef<LatLng | null>(null);
   const theme = useTheme();
+
+  useEffect(() => {
+    if (coordinates.length > 0) lastRouteCoordinateRef.current = coordinates[coordinates.length - 1];
+  }, [coordinates]);
 
   const fitToRoute = (animated = true) => {
     if (coordinates.length < 2) return;
@@ -41,7 +51,9 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
   };
 
   const recenterOnUser = (animated = true) => {
-    const coordinate = lastUserLocationRef.current;
+    // Prefer the ride's own last GPS fix — the same high-accuracy source the
+    // route line is drawn from — over the map's separate location dot.
+    const coordinate = lastRouteCoordinateRef.current ?? lastUserLocationRef.current;
     if (!coordinate) return;
     mapRef.current?.animateToRegion(
       { ...coordinate, latitudeDelta: RECENTER_DELTA, longitudeDelta: RECENTER_DELTA },

@@ -42,6 +42,7 @@ const config: ExpoConfig = {
     ],
     "expo-sqlite",
     "expo-secure-store",
+    "expo-sharing",
     [
       "expo-location",
       {

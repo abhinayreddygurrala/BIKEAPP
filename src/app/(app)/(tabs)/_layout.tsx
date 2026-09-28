@@ -32,11 +32,6 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf="location.north.line" />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="group">
-        <NativeTabs.Trigger.Label>Group</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="person.3" />
-      </NativeTabs.Trigger>
-
       <NativeTabs.Trigger name="settings">
         <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="gearshape" />
