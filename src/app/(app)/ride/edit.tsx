@@ -1,6 +1,15 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, TextInput } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BikePickerSheet } from '@/components/ride/BikePickerSheet';
@@ -106,10 +115,16 @@ export default function EditRideScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
-        <ThemedText type="statLabel" themeColor="textSecondary">
-          Title
-        </ThemedText>
+      <SafeAreaView style={styles.flex}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            <ThemedText type="statLabel" themeColor="textSecondary">
+              Title
+            </ThemedText>
         <TextInput
           value={title}
           onChangeText={setTitle}
@@ -130,8 +145,10 @@ export default function EditRideScreen() {
           </ThemedText>
         </Pressable>
 
-        <PrimaryButton label="Save" onPress={onSave} loading={saving} style={styles.saveButton} />
-        <PrimaryButton label="Delete Ride" variant="danger" onPress={onDelete} loading={deleting} />
+            <PrimaryButton label="Save" onPress={onSave} loading={saving} style={styles.saveButton} />
+            <PrimaryButton label="Delete Ride" variant="danger" onPress={onDelete} loading={deleting} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       <BikePickerSheet
@@ -152,9 +169,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   content: {
-    flex: 1,
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.four,
+    paddingBottom: Spacing.six,
     gap: Spacing.one,
   },
   input: {

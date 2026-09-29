@@ -20,9 +20,10 @@ import {
   formatSpeed,
   speedUnitLabel,
 } from '@/features/ride-tracking/rideMath';
+import { promptTogglePin, showPinLimitAlert } from '@/features/ride-tracking/pinRideAlerts';
 import { useTheme } from '@/hooks/use-theme';
 import { shareRide } from '@/services/exportService';
-import { getRideDetail, type RideSummary } from '@/services/ridesService';
+import { getRideDetail, PinLimitError, setRidePinned, type RideSummary } from '@/services/ridesService';
 
 export default function RideDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -43,6 +44,26 @@ export default function RideDetailScreen() {
     } finally {
       setSharing(false);
     }
+  };
+
+  const onMenuPress = () => {
+    if (!ride) return;
+    promptTogglePin(ride.pinned === 1, async () => {
+      if (!ride) return;
+      const nextPinned = ride.pinned === 1 ? 0 : 1;
+      const previous = ride.pinned;
+      setRide({ ...ride, pinned: nextPinned });
+      try {
+        await setRidePinned(ride.id, nextPinned === 1);
+      } catch (e) {
+        setRide((r) => (r ? { ...r, pinned: previous } : r));
+        if (e instanceof PinLimitError) {
+          showPinLimitAlert();
+        } else {
+          console.error('[RideDetailScreen] failed to toggle pin', e);
+        }
+      }
+    });
   };
 
   useEffect(() => {
@@ -101,16 +122,28 @@ export default function RideDetailScreen() {
         )}
 
         <View style={styles.statsPanel}>
-          <ThemedText type="smallBold">{ride.title ?? fallbackTitle}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {new Date(ride.started_at).toLocaleString(undefined, {
-              weekday: 'long',
-              month: 'short',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-          </ThemedText>
+          <View style={styles.titleRow}>
+            <View style={styles.titleColumn}>
+              <ThemedText type="smallBold">
+                {ride.pinned === 1 ? '📌 ' : ''}
+                {ride.title ?? fallbackTitle}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {new Date(ride.started_at).toLocaleString(undefined, {
+                  weekday: 'long',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </ThemedText>
+            </View>
+            <Pressable onPress={onMenuPress} hitSlop={8} style={styles.menuButton}>
+              <ThemedText type="title" themeColor="textSecondary">
+                ⋯
+              </ThemedText>
+            </Pressable>
+          </View>
           <View style={styles.statsRow}>
             <StatCard
               label="Distance"
@@ -229,6 +262,20 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  titleColumn: {
+    flex: 1,
+    gap: Spacing.one,
+  },
+  menuButton: {
+    paddingHorizontal: Spacing.one,
+    marginTop: -Spacing.one,
   },
   scrollContent: {
     flexGrow: 1,

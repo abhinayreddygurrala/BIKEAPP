@@ -1,11 +1,12 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BikePickerSheet } from '@/components/ride/BikePickerSheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { KEYBOARD_DONE_ACCESSORY_ID, KeyboardDoneAccessory } from '@/components/ui/KeyboardDoneAccessory';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
@@ -86,9 +87,15 @@ export default function NewManualRideScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
-        <TextInput
-          value={title}
+      <SafeAreaView style={styles.flex}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            <TextInput
+              value={title}
           onChangeText={setTitle}
           placeholder="Title (optional)"
           placeholderTextColor={theme.textSecondary}
@@ -115,6 +122,7 @@ export default function NewManualRideScreen() {
             placeholderTextColor={theme.textSecondary}
             keyboardType="number-pad"
             maxLength={2}
+            inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
             style={[inputStyle, styles.flexInput]}
           />
           <TextInput
@@ -124,6 +132,7 @@ export default function NewManualRideScreen() {
             placeholderTextColor={theme.textSecondary}
             keyboardType="number-pad"
             maxLength={2}
+            inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
             style={[inputStyle, styles.flexInput]}
           />
           <TextInput
@@ -133,6 +142,7 @@ export default function NewManualRideScreen() {
             placeholderTextColor={theme.textSecondary}
             keyboardType="number-pad"
             maxLength={4}
+            inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
             style={[inputStyle, styles.flexInput]}
           />
         </View>
@@ -146,6 +156,7 @@ export default function NewManualRideScreen() {
           placeholder="0.0"
           placeholderTextColor={theme.textSecondary}
           keyboardType="decimal-pad"
+          inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
           style={inputStyle}
         />
 
@@ -159,6 +170,7 @@ export default function NewManualRideScreen() {
             placeholder="Hours"
             placeholderTextColor={theme.textSecondary}
             keyboardType="number-pad"
+            inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
             style={[inputStyle, styles.flexInput]}
           />
           <TextInput
@@ -167,6 +179,7 @@ export default function NewManualRideScreen() {
             placeholder="Minutes"
             placeholderTextColor={theme.textSecondary}
             keyboardType="number-pad"
+            inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
             style={[inputStyle, styles.flexInput]}
           />
         </View>
@@ -177,8 +190,12 @@ export default function NewManualRideScreen() {
           </ThemedText>
         ) : null}
 
-        <PrimaryButton label="Save Ride" onPress={onSave} loading={saving} style={styles.saveButton} />
+            <PrimaryButton label="Save Ride" onPress={onSave} loading={saving} style={styles.saveButton} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <KeyboardDoneAccessory />
 
       <BikePickerSheet
         visible={pickerVisible}
@@ -193,9 +210,9 @@ export default function NewManualRideScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: {
-    flex: 1,
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.four,
+    paddingBottom: Spacing.six,
     gap: Spacing.two,
   },
   input: {

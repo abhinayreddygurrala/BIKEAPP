@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ export default function AccountScreen() {
   const [bio, setBio] = useState('');
   const [seeded, setSeeded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (profile && !seeded) {
@@ -32,11 +34,14 @@ export default function AccountScreen() {
   const inputStyle = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }];
 
   const onSave = async () => {
+    setError(null);
     setSaving(true);
     try {
       await updateProfile({ display_name: displayName.trim() || null, bio: bio.trim() || null });
+      router.back();
     } catch (e) {
       console.error('[AccountScreen] failed to save', e);
+      setError(e instanceof Error ? e.message : 'Failed to save. Try again.');
     } finally {
       setSaving(false);
     }
@@ -67,6 +72,12 @@ export default function AccountScreen() {
           multiline
           style={[inputStyle, styles.bioInput]}
         />
+
+        {error ? (
+          <ThemedText type="small" style={{ color: theme.danger }}>
+            {error}
+          </ThemedText>
+        ) : null}
 
         <PrimaryButton label="Save" onPress={onSave} loading={saving} style={styles.saveButton} />
       </SafeAreaView>

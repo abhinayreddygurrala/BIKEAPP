@@ -49,6 +49,20 @@ export async function createLocalFuelLog(
   );
 }
 
+export async function updateLocalFuelLog(
+  id: string,
+  updates: Partial<Omit<LocalFuelLog, 'id' | 'bike_id' | 'created_at'>>
+): Promise<void> {
+  const keys = Object.keys(updates) as (keyof typeof updates)[];
+  if (keys.length === 0) return;
+  const db = await getDb();
+  const setClause = keys.map((k) => `${k} = ?`).join(', ');
+  await db.runAsync(`UPDATE fuel_logs_local SET ${setClause} WHERE id = ?`, [
+    ...keys.map((k) => updates[k] as string | number | null),
+    id,
+  ]);
+}
+
 export async function deleteLocalFuelLog(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM fuel_logs_local WHERE id = ?`, [id]);
@@ -60,4 +74,10 @@ export async function listLocalFuelLogs(bikeId: string): Promise<LocalFuelLog[]>
     `SELECT * FROM fuel_logs_local WHERE bike_id = ? ORDER BY filled_at DESC`,
     [bikeId]
   );
+}
+
+export async function getLocalFuelLog(id: string): Promise<LocalFuelLog | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<LocalFuelLog>(`SELECT * FROM fuel_logs_local WHERE id = ?`, [id]);
+  return row ?? null;
 }

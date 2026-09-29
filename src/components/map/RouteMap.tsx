@@ -1,3 +1,4 @@
+import * as Location from 'expo-location';
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT, type LatLng } from 'react-native-maps';
@@ -50,15 +51,28 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
     });
   };
 
-  const recenterOnUser = (animated = true) => {
-    // Prefer the ride's own last GPS fix — the same high-accuracy source the
-    // route line is drawn from — over the map's separate location dot.
-    const coordinate = lastRouteCoordinateRef.current ?? lastUserLocationRef.current;
-    if (!coordinate) return;
+  const animateTo = (coordinate: LatLng, animated: boolean) => {
     mapRef.current?.animateToRegion(
       { ...coordinate, latitudeDelta: RECENTER_DELTA, longitudeDelta: RECENTER_DELTA },
       animated ? 400 : 0
     );
+  };
+
+  const recenterOnUser = async (animated = true) => {
+    // A cached fix (the ride's last recorded point, polled every couple of
+    // seconds, or react-native-maps' own slower-cadence location dot) can be
+    // stale enough that one tap lands short of where you actually are —
+    // fetching a fresh fix on every press is what makes a single tap land
+    // exactly, instead of needing repeated taps to "catch up".
+    try {
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coordinate = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+      lastUserLocationRef.current = coordinate;
+      animateTo(coordinate, animated);
+    } catch {
+      const coordinate = lastRouteCoordinateRef.current ?? lastUserLocationRef.current;
+      if (coordinate) animateTo(coordinate, animated);
+    }
   };
 
   useImperativeHandle(ref, () => ({ fitToRoute, recenterOnUser }));

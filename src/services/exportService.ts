@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 import { listBikes } from '@/services/bikesService';
+import { listExpenses } from '@/services/expenseService';
 import { listFuelLogs } from '@/services/fuelService';
 import { listMaintenanceRecords } from '@/services/maintenanceService';
 import { listRides, type RideSummary } from '@/services/ridesService';
@@ -30,27 +31,33 @@ export async function exportAllData(): Promise<void> {
 
   const [settings, bikes, rides] = await Promise.all([getLocalSettings(), listBikes(), listRides()]);
 
-  const [maintenanceRecords, fuelLogs] = await Promise.all([
+  const [maintenanceRecords, fuelLogs, expenses] = await Promise.all([
     Promise.all(bikes.map((bike) => listMaintenanceRecords(bike.id))).then((lists) => lists.flat()),
     Promise.all(bikes.map((bike) => listFuelLogs(bike.id))).then((lists) => lists.flat()),
+    Promise.all(bikes.map((bike) => listExpenses(bike.id))).then((lists) => lists.flat()),
   ]);
 
   const bundle = {
+    // Bump this if the shape below ever changes incompatibly, so a future
+    // import can tell an old backup file apart from a new one.
+    formatVersion: 1,
     exportedAt: new Date().toISOString(),
     settings: { displayName: settings.display_name, bio: settings.bio, units: settings.units },
     bikes,
     rides,
     maintenanceRecords,
     fuelLogs,
+    expenses,
   };
 
-  const file = new File(Paths.cache, `bikeapp-export-${Date.now()}.json`);
+  const dateLabel = new Date().toISOString().slice(0, 10);
+  const file = new File(Paths.cache, `odomap-backup-${dateLabel}.json`);
   file.write(JSON.stringify(bundle, null, 2));
 
   await Sharing.shareAsync(file.uri, {
     mimeType: 'application/json',
     UTI: 'public.json',
-    dialogTitle: 'Export BikeApp Data',
+    dialogTitle: 'Export Odomap Data',
   });
 }
 

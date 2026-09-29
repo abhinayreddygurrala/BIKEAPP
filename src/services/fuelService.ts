@@ -3,7 +3,9 @@ import {
   createLocalFuelLog,
   deleteLocalFuelLog,
   getLastFullTankFuelLog,
+  getLocalFuelLog,
   listLocalFuelLogs,
+  updateLocalFuelLog,
   type LocalFuelLog,
 } from '@/features/maintenance/fuelLocalDb';
 
@@ -11,6 +13,10 @@ export type FuelLog = LocalFuelLog;
 
 export async function listFuelLogs(bikeId: string): Promise<FuelLog[]> {
   return listLocalFuelLogs(bikeId);
+}
+
+export async function getFuelLog(id: string): Promise<FuelLog | null> {
+  return getLocalFuelLog(id);
 }
 
 export async function createFuelLog(input: {
@@ -45,6 +51,16 @@ export async function createFuelLog(input: {
   };
   await createLocalFuelLog(id, record);
   return { id, created_at: new Date().toISOString(), ...record };
+}
+
+/** Only updates this entry's own fields — doesn't recompute distance-since-last-full
+ * on any later entry that was chained off this one, same as creation only ever
+ * computes it forward, once, at insert time. */
+export async function updateFuelLog(
+  id: string,
+  updates: Partial<Pick<FuelLog, 'filled_at' | 'odometer_km' | 'liters' | 'cost' | 'full_tank' | 'notes'>>
+): Promise<void> {
+  await updateLocalFuelLog(id, updates);
 }
 
 export async function deleteFuelLog(id: string): Promise<void> {

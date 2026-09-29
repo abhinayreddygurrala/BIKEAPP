@@ -12,6 +12,15 @@ import { uuidv4 } from '@/lib/uuid';
 
 export type RideSummary = LocalRide;
 
+export const MAX_PINNED_RIDES = 3;
+
+export class PinLimitError extends Error {
+  constructor() {
+    super(`You can only pin up to ${MAX_PINNED_RIDES} rides. Unpin one first.`);
+    this.name = 'PinLimitError';
+  }
+}
+
 /** Ride history, newest first. Only finished rides are shown — a ride still
  * being recorded or paused doesn't belong in the list yet. */
 export async function listRides(): Promise<RideSummary[]> {
@@ -36,8 +45,16 @@ export async function updateRide(
   await updateLocalRideFields(ride.id, updates);
 }
 
-/** Pinned rides sort to the top of the history list, ahead of newest-first. */
+/** Pinned rides sort to the top of the history list, ahead of newest-first.
+ * Throws PinLimitError if pinning would exceed MAX_PINNED_RIDES. */
 export async function setRidePinned(rideId: string, pinned: boolean) {
+  if (pinned) {
+    const rides = await getAllLocalRides();
+    const pinnedCount = rides.filter((r) => r.pinned === 1 && r.id !== rideId).length;
+    if (pinnedCount >= MAX_PINNED_RIDES) {
+      throw new PinLimitError();
+    }
+  }
   await updateLocalRideFields(rideId, { pinned: pinned ? 1 : 0 });
 }
 

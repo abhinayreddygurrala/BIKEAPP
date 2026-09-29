@@ -1,12 +1,19 @@
 import { StyleSheet, View } from 'react-native';
+import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type LeanAngleGaugeProps = {
-  /** Signed — negative is left, positive is right (matches useLeanAngleTracker's LEFT_SIGN convention). */
-  currentDeg: number;
+  /** Signed — negative is left, positive is right (matches useLeanAngleTracker's LEFT_SIGN convention).
+   * A shared value so the needle animates on the UI thread straight from the sensor callback,
+   * independent of how often the rest of the recording screen re-renders. */
+  currentDeg: SharedValue<number>;
+  /** Same value, rounded to a whole degree and only pushed to React state when
+   * that integer changes — cheap enough to drive the digit readout and color
+   * bands without the needle's own re-render cost. */
+  currentDegRounded: number;
   maxLeftDeg: number;
   maxRightDeg: number;
 };
@@ -30,10 +37,16 @@ function colorForMagnitude(absDeg: number, theme: ReturnType<typeof useTheme>) {
 }
 
 /** A speedometer-style semicircular dial with a needle pointing straight up at 0° — the lean-gauge look from a Ducati-style dashboard. */
-export function LeanAngleGauge({ currentDeg, maxLeftDeg, maxRightDeg }: LeanAngleGaugeProps) {
+export function LeanAngleGauge({ currentDeg, currentDegRounded, maxLeftDeg, maxRightDeg }: LeanAngleGaugeProps) {
   const theme = useTheme();
-  const clampedDeg = Math.max(-GAUGE_MAX_DEG, Math.min(GAUGE_MAX_DEG, currentDeg));
-  const needleColor = colorForMagnitude(Math.abs(currentDeg), theme);
+  const needleColor = colorForMagnitude(currentDegRounded, theme);
+
+  // Runs on the UI thread, driven directly by the sensor callback's
+  // withTiming updates to `currentDeg` — no React re-render involved.
+  const needleAnimatedStyle = useAnimatedStyle(() => {
+    const clamped = Math.max(-GAUGE_MAX_DEG, Math.min(GAUGE_MAX_DEG, currentDeg.get()));
+    return { transform: [{ rotate: `${clamped}deg` }] };
+  });
 
   return (
     <View style={styles.wrap}>
@@ -75,7 +88,7 @@ export function LeanAngleGauge({ currentDeg, maxLeftDeg, maxRightDeg }: LeanAngl
         {/* Needle: a box centered exactly on the pivot point, rotated as a
             whole (so it turns around its own center = the pivot) — the
             visible bar only occupies the box's top half. */}
-        <View
+        <Animated.View
           pointerEvents="none"
           style={[
             styles.needlePivot,
@@ -84,8 +97,8 @@ export function LeanAngleGauge({ currentDeg, maxLeftDeg, maxRightDeg }: LeanAngl
               height: NEEDLE_LENGTH * 2,
               left: RADIUS - (NEEDLE_WIDTH * 3) / 2,
               top: RADIUS - NEEDLE_LENGTH,
-              transform: [{ rotate: `${clampedDeg}deg` }],
             },
+            needleAnimatedStyle,
           ]}>
           <View
             style={[
@@ -93,12 +106,12 @@ export function LeanAngleGauge({ currentDeg, maxLeftDeg, maxRightDeg }: LeanAngl
               { width: NEEDLE_WIDTH, height: NEEDLE_LENGTH, backgroundColor: needleColor },
             ]}
           />
-        </View>
+        </Animated.View>
         <View style={[styles.hub, { backgroundColor: needleColor }]} />
 
         <View style={styles.readout} pointerEvents="none">
           <ThemedText type="title" style={[styles.readoutValue, { color: needleColor }]}>
-            {Math.round(Math.abs(currentDeg))}
+            {currentDegRounded}
             <ThemedText type="default" style={{ color: needleColor }}>
               °
             </ThemedText>

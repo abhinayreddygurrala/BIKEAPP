@@ -67,6 +67,11 @@ export async function setBikePhoto(bikeId: string, localUri: string): Promise<vo
   await updateLocalBike(bikeId, { photo_filename: filename });
 }
 
+export async function removeBikePhoto(bikeId: string): Promise<void> {
+  deletePhoto('bikes', bikeId);
+  await updateLocalBike(bikeId, { photo_filename: null });
+}
+
 export async function deleteBike(bikeId: string): Promise<void> {
   const bike = await getLocalBike(bikeId);
   if (bike?.photo_filename) {

@@ -11,9 +11,10 @@ import { RideListItem } from '@/components/ride/RideListItem';
 import { Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
 import { computeAggregateStats, distanceUnitLabel, formatDistance, formatDuration } from '@/features/ride-tracking/rideMath';
+import { promptTogglePin, showPinLimitAlert } from '@/features/ride-tracking/pinRideAlerts';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes, type Bike } from '@/services/bikesService';
-import { listRides, type RideSummary } from '@/services/ridesService';
+import { listRides, PinLimitError, setRidePinned, type RideSummary } from '@/services/ridesService';
 
 export default function RidesScreen() {
   const { units } = useSettings();
@@ -56,6 +57,24 @@ export default function RidesScreen() {
     [rides, bikeFilter]
   );
   const summary = useMemo(() => computeAggregateStats(filteredRides), [filteredRides]);
+
+  const onRideMenuPress = useCallback(
+    (ride: RideSummary) => {
+      promptTogglePin(ride.pinned === 1, async () => {
+        try {
+          await setRidePinned(ride.id, ride.pinned !== 1);
+          await load();
+        } catch (e) {
+          if (e instanceof PinLimitError) {
+            showPinLimitAlert();
+          } else {
+            console.error('[RidesScreen] failed to toggle pin', e);
+          }
+        }
+      });
+    },
+    [load]
+  );
 
   return (
     <ThemedView style={styles.flex}>
@@ -114,7 +133,9 @@ export default function RidesScreen() {
                 distanceMeters={item.distance_meters}
                 durationSeconds={item.duration_seconds}
                 units={units}
+                pinned={item.pinned === 1}
                 onPress={() => router.push({ pathname: '/(app)/ride/[id]', params: { id: item.id } })}
+                onMenuPress={() => onRideMenuPress(item)}
               />
             )}
             ListEmptyComponent={

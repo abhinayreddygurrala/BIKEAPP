@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -87,8 +87,14 @@ export default function NewBikeScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
-        <Pressable onPress={() => setYearPickerVisible(true)} style={[inputStyle, styles.pickerRow]}>
+      <SafeAreaView style={styles.flex}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            <Pressable onPress={() => setYearPickerVisible(true)} style={[inputStyle, styles.pickerRow]}>
           <ThemedText type="default" themeColor={year ? 'text' : 'textSecondary'}>
             {year || 'Year'}
           </ThemedText>
@@ -145,7 +151,9 @@ export default function NewBikeScreen() {
           </ThemedText>
         ) : null}
 
-        <PrimaryButton label="Save" onPress={onSubmit} loading={loading} />
+            <PrimaryButton label="Save" onPress={onSubmit} loading={loading} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       <SelectSheet
@@ -179,9 +187,9 @@ export default function NewBikeScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: {
-    flex: 1,
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.four,
+    paddingBottom: Spacing.six,
     gap: Spacing.three,
   },
   input: {

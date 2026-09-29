@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import { Easing, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import type { DeviceMotionMeasurement } from 'expo-sensors/build/DeviceMotion';
 import type { CurveEvent } from '@/features/ride-tracking/rideMath';
@@ -55,33 +57,60 @@ const WHEELIE_MIN_DURATION_S = 0.3;
 const WHEELIE_PITCH_SIGN = 1;
 const G = 9.80665;
 
-export type LeanStats = {
-  currentDeg: number;
+// Portrait mount assumes the phone's top-to-bottom axis points along the
+// bike's front-to-back line (see gamma's comment above), so gamma=lean,
+// beta=pitch. Physically rotating the phone 90° into a landscape mount
+// rotates that same body-fixed axis to point along the bike's LEFT-RIGHT
+// line instead — geometrically, gamma and beta swap roles (gamma becomes
+// pitch, beta becomes lean). Which of the two landscape directions the sign
+// comes out correct for is a best-effort guess, unverified on a physical
+// mount — flip the -1 below to +1 (or vice versa) if left/right or the
+// wheelie direction read backwards once tested on the bike.
+type MountOrientation = 'portrait' | 'landscape-left' | 'landscape-right';
+const LANDSCAPE_MOUNT_SIGN: Record<Exclude<MountOrientation, 'portrait'>, 1 | -1> = {
+  'landscape-left': -1,
+  'landscape-right': 1,
+};
+
+// Live state — kept in React state because the gauge's "MAX LEFT/MAX RIGHT"
+// labels need to re-render when they change, but that only happens on a new
+// personal-best lean per side (rare), not on every sensor sample.
+// currentDegRounded gets the same treatment: only set when the rounded
+// integer actually changes, which is most samples during a snap but far
+// fewer than every single 150ms tick while leaned steady through a corner.
+export type LiveLeanStats = {
+  currentDegRounded: number;
+  steepestLeanLeftDeg: number;
+  steepestLeanRightDeg: number;
+};
+
+const EMPTY_LIVE_LEAN_STATS: LiveLeanStats = {
+  currentDegRounded: 0,
+  steepestLeanLeftDeg: 0,
+  steepestLeanRightDeg: 0,
+};
+
+// Everything else only matters once, at ride-stop, when it's persisted —
+// nothing renders it live, so it stays in refs and is read via
+// getFinalStats() instead of triggering a re-render on every sample.
+export type FinalLeanStats = {
   maxDeg: number;
   avgDeg: number;
   curveCount: number;
-  steepestLeanLeftDeg: number;
-  steepestLeanRightDeg: number;
   wheelieCount: number;
   longestWheelieSeconds: number;
   peakG: number;
 };
 
-const EMPTY_LEAN_STATS: LeanStats = {
-  currentDeg: 0,
-  maxDeg: 0,
-  avgDeg: 0,
-  curveCount: 0,
-  steepestLeanLeftDeg: 0,
-  steepestLeanRightDeg: 0,
-  wheelieCount: 0,
-  longestWheelieSeconds: 0,
-  peakG: 0,
-};
-
 /** Live lean-angle, curve, and wheelie tracking from the device's motion sensors, active only while `active` is true (foreground only — see the migration plan for why background isn't supported). */
 export function useLeanAngleTracker(active: boolean) {
-  const [stats, setStats] = useState<LeanStats>(EMPTY_LEAN_STATS);
+  const [liveStats, setLiveStats] = useState<LiveLeanStats>(EMPTY_LIVE_LEAN_STATS);
+  // Live needle position, updated straight from the sensor callback on every
+  // sample and consumed via useAnimatedStyle in LeanAngleGauge — bypasses
+  // React state/re-render entirely so the gauge stays smooth regardless of
+  // whatever else this ride-recording screen re-renders (map, GPS, etc).
+  const leanDegShared = useSharedValue(0);
+  const lastRoundedDegRef = useRef(0);
   const offsetDegRef = useRef<number | null>(null);
   const pitchOffsetDegRef = useRef<number | null>(null);
   const calibrationSamplesRef = useRef<number[]>([]);
@@ -116,101 +145,145 @@ export function useLeanAngleTracker(active: boolean) {
   // orientation (same caveat as LEFT_SIGN/WHEELIE_PITCH_SIGN above), so this
   // tracks overall accel/brake/corner force instead of isolating cornering.
   const peakGRef = useRef(0);
+  // Detected once per activation (ride start or resume-after-pause), not
+  // while actively recording. A live listener sounds appealing but is
+  // actually wrong here: real hard cornering can tilt the phone far enough
+  // that iOS's own accelerometer-based orientation heuristic misreads it as
+  // a rotation to a different interface orientation — exactly mid-corner,
+  // the worst possible moment to silently reset calibration. Pausing already
+  // tears this effect down and resuming re-runs it, which is the intended
+  // (and only) point to re-detect a physically remounted phone.
+  const mountOrientationRef = useRef<MountOrientation>('portrait');
 
   useEffect(() => {
     if (!active || !DeviceMotion) return;
+    const deviceMotion = DeviceMotion;
+    let subscription: { remove: () => void } | undefined;
+    let cancelled = false;
 
-    const subscription = DeviceMotion.addListener((measurement: DeviceMotionMeasurement) => {
-      const rotation = measurement.rotation;
-      if (!rotation) return;
-      const nowMs = Date.now();
-      const gammaDeg = rotation.gamma * RAD_TO_DEG;
-      const betaDeg = rotation.beta * RAD_TO_DEG;
+    const applyOrientation = (orientation: ScreenOrientation.Orientation) => {
+      mountOrientationRef.current =
+        orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT
+          ? 'landscape-left'
+          : orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT
+            ? 'landscape-right'
+            : 'portrait';
+    };
 
-      if (offsetDegRef.current == null || pitchOffsetDegRef.current == null) {
-        calibrationSamplesRef.current.push(gammaDeg);
-        pitchCalibrationSamplesRef.current.push(betaDeg);
-        if (calibrationSamplesRef.current.length >= CALIBRATION_SAMPLES) {
-          const sum = calibrationSamplesRef.current.reduce((a, b) => a + b, 0);
-          offsetDegRef.current = sum / calibrationSamplesRef.current.length;
-          const pitchSum = pitchCalibrationSamplesRef.current.reduce((a, b) => a + b, 0);
-          pitchOffsetDegRef.current = pitchSum / pitchCalibrationSamplesRef.current.length;
-        }
-        return;
-      }
+    ScreenOrientation.getOrientationAsync()
+      .then(applyOrientation)
+      .catch(() => {
+        mountOrientationRef.current = 'portrait';
+      })
+      .finally(() => {
+        if (cancelled) return;
 
-      const leanDeg = gammaDeg - offsetDegRef.current;
-      const absLean = Math.abs(leanDeg);
-      maxAbsRef.current = Math.max(maxAbsRef.current, absLean);
-      absSumRef.current += absLean;
-      sampleCountRef.current += 1;
+        subscription = deviceMotion.addListener((measurement: DeviceMotionMeasurement) => {
+          const rotation = measurement.rotation;
+          if (!rotation) return;
+          const nowMs = Date.now();
+          const gammaDeg = rotation.gamma * RAD_TO_DEG;
+          const betaDeg = rotation.beta * RAD_TO_DEG;
 
-      // Curve boundary detection (hysteresis: enter above CURVE_ENTER_DEG,
-      // only exit once back below CURVE_EXIT_DEG).
-      if (!inCurveRef.current && absLean >= CURVE_ENTER_DEG) {
-        inCurveRef.current = true;
-        curveStartMsRef.current = nowMs;
-        curvePeakSignedRef.current = leanDeg;
-      } else if (inCurveRef.current) {
-        if (Math.abs(leanDeg) > Math.abs(curvePeakSignedRef.current)) {
-          curvePeakSignedRef.current = leanDeg;
-        }
-        if (absLean < CURVE_EXIT_DEG) {
-          const durationS = (nowMs - curveStartMsRef.current) / 1000;
-          if (durationS >= CURVE_MIN_DURATION_S) {
-            curveCountRef.current += 1;
-            const isLeft = Math.sign(curvePeakSignedRef.current) === LEFT_SIGN;
-            const peakAbs = Math.abs(curvePeakSignedRef.current);
-            if (isLeft) steepestLeftRef.current = Math.max(steepestLeftRef.current, peakAbs);
-            else steepestRightRef.current = Math.max(steepestRightRef.current, peakAbs);
-            curveEventsRef.current.push({
-              startMs: curveStartMsRef.current,
-              endMs: nowMs,
-              peakDeg: peakAbs,
-              direction: isLeft ? 'left' : 'right',
-            });
+          const mount = mountOrientationRef.current;
+          const leanAxisDeg = mount === 'portrait' ? gammaDeg : betaDeg * LANDSCAPE_MOUNT_SIGN[mount];
+          const pitchAxisDeg = mount === 'portrait' ? betaDeg : gammaDeg * LANDSCAPE_MOUNT_SIGN[mount];
+
+          if (offsetDegRef.current == null || pitchOffsetDegRef.current == null) {
+            calibrationSamplesRef.current.push(leanAxisDeg);
+            pitchCalibrationSamplesRef.current.push(pitchAxisDeg);
+            if (calibrationSamplesRef.current.length >= CALIBRATION_SAMPLES) {
+              const sum = calibrationSamplesRef.current.reduce((a, b) => a + b, 0);
+              offsetDegRef.current = sum / calibrationSamplesRef.current.length;
+              const pitchSum = pitchCalibrationSamplesRef.current.reduce((a, b) => a + b, 0);
+              pitchOffsetDegRef.current = pitchSum / pitchCalibrationSamplesRef.current.length;
+            }
+            return;
           }
-          inCurveRef.current = false;
-        }
-      }
 
-      const accel = measurement.acceleration;
-      if (accel) {
-        const magnitudeG = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2) / G;
-        peakGRef.current = Math.max(peakGRef.current, magnitudeG);
-      }
+          const leanDeg = leanAxisDeg - offsetDegRef.current;
+          const absLean = Math.abs(leanDeg);
+          maxAbsRef.current = Math.max(maxAbsRef.current, absLean);
+          absSumRef.current += absLean;
+          sampleCountRef.current += 1;
 
-      // Wheelie boundary detection, same hysteresis shape on the pitch axis.
-      const pitchDeg = (betaDeg - pitchOffsetDegRef.current) * WHEELIE_PITCH_SIGN;
-      if (!inWheelieRef.current && pitchDeg >= WHEELIE_ENTER_DEG) {
-        inWheelieRef.current = true;
-        wheelieStartMsRef.current = nowMs;
-      } else if (inWheelieRef.current && pitchDeg < WHEELIE_EXIT_DEG) {
-        const durationS = (nowMs - wheelieStartMsRef.current) / 1000;
-        if (durationS >= WHEELIE_MIN_DURATION_S) {
-          wheelieCountRef.current += 1;
-          longestWheelieRef.current = Math.max(longestWheelieRef.current, durationS);
-        }
-        inWheelieRef.current = false;
-      }
+          // Drives the needle directly on the UI thread. withTiming smooths
+          // over the gap between samples instead of snapping, so the needle
+          // sweeps rather than ticks even at a 150ms sample rate.
+          leanDegShared.set(withTiming(leanDeg, { duration: UPDATE_INTERVAL_MS, easing: Easing.linear }));
 
-      setStats({
-        currentDeg: leanDeg,
-        maxDeg: maxAbsRef.current,
-        avgDeg: absSumRef.current / sampleCountRef.current,
-        curveCount: curveCountRef.current,
-        steepestLeanLeftDeg: steepestLeftRef.current,
-        steepestLeanRightDeg: steepestRightRef.current,
-        wheelieCount: wheelieCountRef.current,
-        longestWheelieSeconds: longestWheelieRef.current,
-        peakG: peakGRef.current,
+          const roundedAbs = Math.round(absLean);
+          if (roundedAbs !== lastRoundedDegRef.current) {
+            lastRoundedDegRef.current = roundedAbs;
+            setLiveStats((s) => ({ ...s, currentDegRounded: roundedAbs }));
+          }
+
+          // Curve boundary detection (hysteresis: enter above CURVE_ENTER_DEG,
+          // only exit once back below CURVE_EXIT_DEG).
+          if (!inCurveRef.current && absLean >= CURVE_ENTER_DEG) {
+            inCurveRef.current = true;
+            curveStartMsRef.current = nowMs;
+            curvePeakSignedRef.current = leanDeg;
+          } else if (inCurveRef.current) {
+            if (Math.abs(leanDeg) > Math.abs(curvePeakSignedRef.current)) {
+              curvePeakSignedRef.current = leanDeg;
+            }
+            if (absLean < CURVE_EXIT_DEG) {
+              const durationS = (nowMs - curveStartMsRef.current) / 1000;
+              if (durationS >= CURVE_MIN_DURATION_S) {
+                curveCountRef.current += 1;
+                const isLeft = Math.sign(curvePeakSignedRef.current) === LEFT_SIGN;
+                const peakAbs = Math.abs(curvePeakSignedRef.current);
+                // Only touches React state when a side's live max actually
+                // moves (a new personal-best lean, rare after the first
+                // minute of riding) — not on every sample, which is what was
+                // causing the whole recording screen to re-render 6-7x/second
+                // and the needle to visibly stutter.
+                if (isLeft && peakAbs > steepestLeftRef.current) {
+                  steepestLeftRef.current = peakAbs;
+                  setLiveStats((s) => ({ ...s, steepestLeanLeftDeg: peakAbs }));
+                } else if (!isLeft && peakAbs > steepestRightRef.current) {
+                  steepestRightRef.current = peakAbs;
+                  setLiveStats((s) => ({ ...s, steepestLeanRightDeg: peakAbs }));
+                }
+                curveEventsRef.current.push({
+                  startMs: curveStartMsRef.current,
+                  endMs: nowMs,
+                  peakDeg: peakAbs,
+                  direction: isLeft ? 'left' : 'right',
+                });
+              }
+              inCurveRef.current = false;
+            }
+          }
+
+          const accel = measurement.acceleration;
+          if (accel) {
+            const magnitudeG = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2) / G;
+            peakGRef.current = Math.max(peakGRef.current, magnitudeG);
+          }
+
+          // Wheelie boundary detection, same hysteresis shape on the pitch axis.
+          const pitchDeg = (pitchAxisDeg - pitchOffsetDegRef.current) * WHEELIE_PITCH_SIGN;
+          if (!inWheelieRef.current && pitchDeg >= WHEELIE_ENTER_DEG) {
+            inWheelieRef.current = true;
+            wheelieStartMsRef.current = nowMs;
+          } else if (inWheelieRef.current && pitchDeg < WHEELIE_EXIT_DEG) {
+            const durationS = (nowMs - wheelieStartMsRef.current) / 1000;
+            if (durationS >= WHEELIE_MIN_DURATION_S) {
+              wheelieCountRef.current += 1;
+              longestWheelieRef.current = Math.max(longestWheelieRef.current, durationS);
+            }
+            inWheelieRef.current = false;
+          }
+        });
+
+        deviceMotion.setUpdateInterval(UPDATE_INTERVAL_MS);
       });
-    });
-
-    DeviceMotion.setUpdateInterval(UPDATE_INTERVAL_MS);
 
     return () => {
-      subscription.remove();
+      cancelled = true;
+      subscription?.remove();
       // Re-calibrate next time tracking (re)starts, e.g. after a pause where
       // the mount could have been bumped.
       offsetDegRef.current = null;
@@ -220,7 +293,7 @@ export function useLeanAngleTracker(active: boolean) {
       inCurveRef.current = false;
       inWheelieRef.current = false;
     };
-  }, [active]);
+  }, [active, leanDegShared]);
 
   const reset = useCallback(() => {
     offsetDegRef.current = null;
@@ -239,12 +312,25 @@ export function useLeanAngleTracker(active: boolean) {
     wheelieCountRef.current = 0;
     longestWheelieRef.current = 0;
     peakGRef.current = 0;
-    setStats(EMPTY_LEAN_STATS);
-  }, []);
+    lastRoundedDegRef.current = 0;
+    leanDegShared.set(0);
+    setLiveStats(EMPTY_LIVE_LEAN_STATS);
+  }, [leanDegShared]);
 
-  // Read once at ride-stop, not part of live `stats` — an array in React
-  // state would re-render on every curve, which nothing needs live.
+  // Read once at ride-stop, not part of live state — these only matter once
+  // persisted, so keeping them in refs avoids a re-render on every sample.
   const getCurveEvents = useCallback(() => curveEventsRef.current, []);
+  const getFinalStats = useCallback(
+    (): FinalLeanStats => ({
+      maxDeg: maxAbsRef.current,
+      avgDeg: sampleCountRef.current > 0 ? absSumRef.current / sampleCountRef.current : 0,
+      curveCount: curveCountRef.current,
+      wheelieCount: wheelieCountRef.current,
+      longestWheelieSeconds: longestWheelieRef.current,
+      peakG: peakGRef.current,
+    }),
+    []
+  );
 
-  return { ...stats, reset, getCurveEvents };
+  return { ...liveStats, leanDegShared, reset, getCurveEvents, getFinalStats };
 }

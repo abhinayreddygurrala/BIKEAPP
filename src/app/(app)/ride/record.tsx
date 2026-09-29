@@ -2,8 +2,9 @@ import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BikePickerSheet } from '@/components/ride/BikePickerSheet';
@@ -37,6 +38,18 @@ export default function RecordRideScreen() {
   const [bikeId, setBikeId] = useState<string | null>(null);
   const [bikeName, setBikeName] = useState<string | null>(null);
   const [bikePickerVisible, setBikePickerVisible] = useState(false);
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
+  useEffect(() => {
+    // Only this screen opts back into landscape (for a horizontal handlebar
+    // mount) — the root layout locks every other screen to portrait, and
+    // restoring that here on the way out is this screen's job, not theirs.
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.DEFAULT);
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
 
   const onSelectBike = (nextBikeId: string | null) => {
     setBikeId(nextBikeId);
@@ -100,7 +113,7 @@ export default function RecordRideScreen() {
     return (
       <PermissionPrompt
         title="Location Access"
-        description="BikeApp uses your location to record your ride's route, distance, and speed while the app is open."
+        description="Odomap uses your location to record your ride's route, distance, and speed while the app is open."
         actionLabel="Enable Location"
         onAction={handleRequestForeground}
       />
@@ -111,7 +124,7 @@ export default function RecordRideScreen() {
     return (
       <PermissionPrompt
         title="Background Location"
-        description="Allow Always access so BikeApp keeps recording your route, distance, and speed even when your phone is locked or the app is in the background. Without it, tracking pauses when you leave the app."
+        description="Allow Always access so Odomap keeps recording your route, distance, and speed even when your phone is locked or the app is in the background. Without it, tracking pauses when you leave the app."
         actionLabel="Allow Background Access"
         onAction={handleRequestBackground}
         secondaryLabel="Continue without it"
@@ -124,6 +137,72 @@ export default function RecordRideScreen() {
   const isRecording = recorder.status === 'recording';
   const isPaused = recorder.status === 'paused';
 
+  const warningBanner =
+    permissionStep === 'foreground-only' ? (
+      <ThemedView type="backgroundElement" style={styles.warningBanner}>
+        <ThemedText type="small" style={{ color: '#FFB020' }}>
+          Background access isn&apos;t enabled — recording will pause if you leave the app.
+        </ThemedText>
+      </ThemedView>
+    ) : null;
+
+  const leanGauge =
+    isRecording || isPaused ? (
+      <LeanAngleGauge
+        currentDeg={recorder.lean.leanDegShared}
+        currentDegRounded={recorder.lean.currentDegRounded}
+        maxLeftDeg={recorder.lean.steepestLeanLeftDeg}
+        maxRightDeg={recorder.lean.steepestLeanRightDeg}
+      />
+    ) : null;
+
+  const statCards = [
+    {
+      label: 'Distance',
+      value: formatDistance(recorder.stats.distanceMeters, units),
+      unit: distanceUnitLabel(units),
+    },
+    { label: 'Duration', value: formatDuration(recorder.stats.durationSeconds), unit: undefined },
+    {
+      label: 'Speed',
+      value: formatSpeed(recorder.stats.avgSpeedKmh, units),
+      unit: `${speedUnitLabel(units)} avg`,
+    },
+  ];
+
+  const bikeRow = isIdle ? (
+    <Pressable
+      onPress={() => setBikePickerVisible(true)}
+      style={[styles.bikeRow, { backgroundColor: theme.backgroundElement }]}>
+      <ThemedText type="small" themeColor="textSecondary">
+        Bike
+      </ThemedText>
+      <ThemedText type="default">{bikeName ?? 'No bike'}</ThemedText>
+    </Pressable>
+  ) : null;
+
+  const controlsRow = (
+    <View style={styles.controlsRow}>
+      {isIdle ? <PrimaryButton label="Start Ride" style={styles.flexButton} onPress={handleStart} /> : null}
+      {isRecording ? (
+        <>
+          <PrimaryButton label="Pause" variant="muted" style={styles.flexButton} onPress={recorder.pause} />
+          <PrimaryButton label="Stop" variant="danger" style={styles.flexButton} onPress={handleStop} />
+        </>
+      ) : null}
+      {isPaused ? (
+        <>
+          <PrimaryButton label="Resume" style={styles.flexButton} onPress={recorder.resume} />
+          <PrimaryButton label="Stop" variant="danger" style={styles.flexButton} onPress={handleStop} />
+        </>
+      ) : null}
+    </View>
+  );
+
+  const cancelButton = isIdle ? (
+    <PrimaryButton label="Cancel" variant="muted" onPress={() => router.back()} />
+  ) : null;
+
   return (
     <ThemedView style={styles.flex}>
       <RouteMap
@@ -133,84 +212,70 @@ export default function RecordRideScreen() {
         followsUserLocation={isRecording}
         fitOnChange={isIdle}
         style={styles.map}>
-        <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-          {permissionStep === 'foreground-only' ? (
-            <ThemedView type="backgroundElement" style={styles.warningBanner}>
-              <ThemedText type="small" style={{ color: '#FFB020' }}>
-                Background access isn&apos;t enabled — recording will pause if you leave the app.
-              </ThemedText>
-            </ThemedView>
-          ) : null}
+        <SafeAreaView
+          style={[styles.overlay, isLandscape && styles.overlayLandscape]}
+          pointerEvents="box-none">
+          {isLandscape ? (
+            <>
+              <View style={styles.landscapeMapArea}>
+                <Pressable
+                  onPress={() => mapRef.current?.recenterOnUser()}
+                  hitSlop={8}
+                  style={[styles.recenterButton, styles.recenterButtonLandscape, { backgroundColor: theme.backgroundElement }]}>
+                  <ThemedText type="default" style={{ color: theme.accent }}>
+                    ◎
+                  </ThemedText>
+                </Pressable>
+                {leanGauge ? <View style={styles.landscapeGaugeWrap}>{leanGauge}</View> : null}
+              </View>
 
-          <Pressable
-            onPress={() => mapRef.current?.recenterOnUser()}
-            hitSlop={8}
-            style={[styles.recenterButton, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="default" style={{ color: theme.accent }}>
-              ◎
-            </ThemedText>
-          </Pressable>
+              <View style={styles.landscapePanel}>
+                {warningBanner}
+                <View style={styles.spacer} />
+                <View style={styles.landscapeStatsColumn}>
+                  {statCards.map((s) => (
+                    <StatCard
+                      key={s.label}
+                      compact
+                      label={s.label}
+                      value={s.value}
+                      unit={s.unit}
+                      style={styles.landscapeStatCard}
+                    />
+                  ))}
+                </View>
+                {bikeRow}
+                {controlsRow}
+                {cancelButton}
+              </View>
+            </>
+          ) : (
+            <>
+              {warningBanner}
 
-          <View style={styles.spacer} />
+              <Pressable
+                onPress={() => mapRef.current?.recenterOnUser()}
+                hitSlop={8}
+                style={[styles.recenterButton, { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText type="default" style={{ color: theme.accent }}>
+                  ◎
+                </ThemedText>
+              </Pressable>
 
-          {isRecording || isPaused ? (
-            <LeanAngleGauge
-              currentDeg={recorder.lean.currentDeg}
-              maxLeftDeg={recorder.lean.steepestLeanLeftDeg}
-              maxRightDeg={recorder.lean.steepestLeanRightDeg}
-            />
-          ) : null}
-          <View style={styles.statsRow}>
-            <StatCard
-              label="Distance"
-              value={formatDistance(recorder.stats.distanceMeters, units)}
-              unit={distanceUnitLabel(units)}
-            />
-            <StatCard label="Duration" value={formatDuration(recorder.stats.durationSeconds)} />
-            <StatCard
-              label="Speed"
-              value={formatSpeed(recorder.stats.avgSpeedKmh, units)}
-              unit={`${speedUnitLabel(units)} avg`}
-            />
-          </View>
+              <View style={styles.spacer} />
 
-          {isIdle ? (
-            <Pressable
-              onPress={() => setBikePickerVisible(true)}
-              style={[styles.bikeRow, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText type="small" themeColor="textSecondary">
-                Bike
-              </ThemedText>
-              <ThemedText type="default">{bikeName ?? 'No bike'}</ThemedText>
-            </Pressable>
-          ) : null}
+              {leanGauge}
+              <View style={styles.statsRow}>
+                {statCards.map((s) => (
+                  <StatCard key={s.label} label={s.label} value={s.value} unit={s.unit} />
+                ))}
+              </View>
 
-          <View style={styles.controlsRow}>
-            {isIdle ? (
-              <PrimaryButton label="Start Ride" style={styles.flexButton} onPress={handleStart} />
-            ) : null}
-            {isRecording ? (
-              <>
-                <PrimaryButton
-                  label="Pause"
-                  variant="muted"
-                  style={styles.flexButton}
-                  onPress={recorder.pause}
-                />
-                <PrimaryButton label="Stop" variant="danger" style={styles.flexButton} onPress={handleStop} />
-              </>
-            ) : null}
-            {isPaused ? (
-              <>
-                <PrimaryButton label="Resume" style={styles.flexButton} onPress={recorder.resume} />
-                <PrimaryButton label="Stop" variant="danger" style={styles.flexButton} onPress={handleStop} />
-              </>
-            ) : null}
-          </View>
-
-          {isIdle ? (
-            <PrimaryButton label="Cancel" variant="muted" onPress={() => router.back()} />
-          ) : null}
+              {bikeRow}
+              {controlsRow}
+              {cancelButton}
+            </>
+          )}
         </SafeAreaView>
       </RouteMap>
 
@@ -264,6 +329,41 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     padding: Spacing.three,
     gap: Spacing.two,
+  },
+  overlayLandscape: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    padding: 0,
+    gap: 0,
+  },
+  landscapeMapArea: {
+    flex: 1,
+    position: 'relative',
+  },
+  landscapeGaugeWrap: {
+    position: 'absolute',
+    left: Spacing.three,
+    bottom: Spacing.three,
+  },
+  landscapePanel: {
+    width: 240,
+    justifyContent: 'flex-end',
+    padding: Spacing.three,
+    gap: Spacing.two,
+  },
+  landscapeStatsColumn: {
+    gap: Spacing.two,
+  },
+  // StatCard's own base style is flex:1, meant for splitting width evenly
+  // in a horizontal row (its normal home everywhere else in the app).
+  // Stacked vertically here instead, flex:1 has no bounded height to grow
+  // into and Yoga collapses each card toward its flex-basis of 0 — this
+  // resets it back to natural content height.
+  landscapeStatCard: {
+    flex: 0,
+  },
+  recenterButtonLandscape: {
+    top: Spacing.three,
   },
   spacer: { flex: 1 },
   warningBanner: {

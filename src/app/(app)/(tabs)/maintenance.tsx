@@ -1,27 +1,42 @@
 import { Link, router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
+import { StatCard } from '@/components/ui/StatCard';
 import { Shadows, Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
+import {
+  computeMaintenanceStats,
+  EXPENSE_CATEGORY_LABELS,
+  formatCostPerDistance,
+  formatFuelEconomy,
+  formatVolume,
+  getDueItems,
+  getSuggestedIntervals,
+  MAINTENANCE_TYPE_LABELS,
+  volumeUnitLabel,
+  type DueItem,
+  type SuggestedInterval,
+} from '@/features/maintenance/maintenanceMath';
 import { distanceUnitLabel, formatDistance } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes, type Bike } from '@/services/bikesService';
+import { listExpenses, type Expense } from '@/services/expenseService';
 import { listFuelLogs, type FuelLog } from '@/services/fuelService';
 import { listMaintenanceRecords, type MaintenanceRecord } from '@/services/maintenanceService';
+import { syncDueNotifications } from '@/services/notificationService';
 
-const TYPE_LABELS: Record<MaintenanceRecord['type'], string> = {
-  oil_change: 'Oil Change',
-  chain: 'Chain',
-  tires: 'Tires',
-  brake_pads: 'Brake Pads',
-  service: 'Service',
-  other: 'Other',
+const DUE_STATUS_LABEL: Record<DueItem['status'], string> = {
+  overdue: 'Overdue',
+  soon: 'Due Soon',
+  upcoming: 'Upcoming',
 };
+
+const TYPE_LABELS = MAINTENANCE_TYPE_LABELS;
 
 const ADD_BUTTON_SIZE = 32;
 
@@ -48,12 +63,28 @@ function AddButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+function describeDue(item: DueItem, units: 'metric' | 'imperial'): string {
+  const parts: string[] = [];
+  if (item.odometerRemainingKm != null) {
+    const dist = formatDistance(Math.abs(item.odometerRemainingKm) * 1000, units);
+    const unit = distanceUnitLabel(units);
+    parts.push(item.odometerRemainingKm <= 0 ? `${dist} ${unit} overdue` : `${dist} ${unit} away`);
+  }
+  if (item.record.next_due_date) {
+    const dateLabel = new Date(item.record.next_due_date).toLocaleDateString();
+    parts.push(item.daysRemaining != null && item.daysRemaining <= 0 ? `was due ${dateLabel}` : `due ${dateLabel}`);
+  }
+  return parts.join(' · ');
+}
+
 export default function MaintenanceScreen() {
   const { units } = useSettings();
+  const theme = useTheme();
   const [bikes, setBikes] = useState<Bike[]>([]);
   const [selectedBikeId, setSelectedBikeId] = useState<string | null>(null);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [fuelLogs, setFuelLogs] = useState<FuelLog[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const loadBikes = useCallback(() => {
@@ -64,10 +95,11 @@ export default function MaintenanceScreen() {
   }, []);
 
   const loadRecords = useCallback((bikeId: string) => {
-    Promise.all([listMaintenanceRecords(bikeId), listFuelLogs(bikeId)])
-      .then(([recordsResult, fuelResult]) => {
+    Promise.all([listMaintenanceRecords(bikeId), listFuelLogs(bikeId), listExpenses(bikeId)])
+      .then(([recordsResult, fuelResult, expensesResult]) => {
         setRecords(recordsResult);
         setFuelLogs(fuelResult);
+        setExpenses(expensesResult);
       })
       .catch((e) => console.error('[MaintenanceScreen] failed to load records', e));
   }, []);
@@ -82,6 +114,28 @@ export default function MaintenanceScreen() {
   );
 
   const selectedBike = bikes.find((b) => b.id === selectedBikeId) ?? null;
+
+  const stats = computeMaintenanceStats(records, fuelLogs, expenses);
+  const fuelEconomy = formatFuelEconomy(stats.fuelEconomyKmPerLiter, units);
+  const costPerDistance = formatCostPerDistance(stats.costPerKm, units);
+  const knownOdometerReadings = [
+    selectedBike?.current_odometer_km ?? null,
+    ...records.map((r) => r.odometer_km),
+    ...fuelLogs.map((f) => f.odometer_km),
+  ].filter((v): v is number => v != null);
+  const currentOdometerKm = knownOdometerReadings.length ? Math.max(...knownOdometerReadings) : null;
+  const dueItems = getDueItems(records, currentOdometerKm);
+  const suggestedIntervals = getSuggestedIntervals(records, currentOdometerKm);
+
+  useEffect(() => {
+    if (!selectedBike) return;
+    syncDueNotifications(dueItems, selectedBike.name).catch((e) =>
+      console.error('[MaintenanceScreen] notification sync failed', e)
+    );
+    // dueItems is recomputed fresh every render from records/currentOdometerKm
+    // — keying on those instead avoids re-running on every unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, selectedBike?.id, currentOdometerKm]);
 
   if (!loaded) {
     return (
@@ -142,12 +196,96 @@ export default function MaintenanceScreen() {
         </Pressable>
         <ThemedText type="title">🏍️ {selectedBike.name}</ThemedText>
 
+        {records.length > 0 || fuelLogs.length > 0 || expenses.length > 0 ? (
+          <View style={styles.statsRow}>
+            <StatCard label="Total Spent" value={`$${stats.totalSpent.toFixed(2)}`} compact />
+            {costPerDistance ? (
+              <StatCard label={`Cost/${distanceUnitLabel(units)}`} value={costPerDistance} compact />
+            ) : null}
+            {fuelEconomy ? <StatCard label="Fuel Economy" value={fuelEconomy.value} unit={fuelEconomy.unit} compact /> : null}
+          </View>
+        ) : null}
+
         <FlatList
           data={[{ kind: 'header' as const }]}
           keyExtractor={() => 'body'}
           contentContainerStyle={styles.list}
           renderItem={() => (
             <View style={styles.sections}>
+              {dueItems.length > 0 ? (
+                <View style={styles.dueSection}>
+                  <ThemedText type="statLabel" themeColor="textSecondary">
+                    Upcoming
+                  </ThemedText>
+                  {dueItems.map((item) => (
+                    <Pressable
+                      key={item.record.id}
+                      onPress={() =>
+                        router.push({ pathname: '/(app)/maintenance/edit-service', params: { id: item.record.id } })
+                      }>
+                      <ThemedView type="backgroundElement" style={styles.card}>
+                        <View style={styles.dueRow}>
+                          <ThemedText type="smallBold">{TYPE_LABELS[item.record.type]}</ThemedText>
+                          <View style={styles.cardHeaderRight}>
+                            <ThemedText
+                              type="small"
+                              style={{
+                                color:
+                                  item.status === 'overdue'
+                                    ? theme.danger
+                                    : item.status === 'soon'
+                                      ? theme.accent
+                                      : theme.textSecondary,
+                              }}>
+                              {DUE_STATUS_LABEL[item.status]}
+                            </ThemedText>
+                            <ThemedText type="default" themeColor="textSecondary">
+                              ›
+                            </ThemedText>
+                          </View>
+                        </View>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {describeDue(item, units)}
+                        </ThemedText>
+                      </ThemedView>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
+              {suggestedIntervals.length > 0 ? (
+                <View style={styles.dueSection}>
+                  <ThemedText type="statLabel" themeColor="textSecondary">
+                    Suggested
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.suggestedHint}>
+                    General rule of thumb — not based on your bike specifically.
+                  </ThemedText>
+                  {suggestedIntervals.map((item: SuggestedInterval) => (
+                    <Pressable
+                      key={item.type}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/(app)/maintenance/new-service',
+                          params: { bikeId: selectedBike.id, type: item.type },
+                        })
+                      }>
+                      <ThemedView type="backgroundElement" style={[styles.card, styles.suggestedCard]}>
+                        <View style={styles.dueRow}>
+                          <ThemedText type="smallBold">{TYPE_LABELS[item.type]}</ThemedText>
+                          <ThemedText type="default" themeColor="textSecondary">
+                            ›
+                          </ThemedText>
+                        </View>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {formatDistance(item.suggestedAtKm * 1000, units)} {distanceUnitLabel(units)} · never logged
+                        </ThemedText>
+                      </ThemedView>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
               <View style={styles.sectionHeader}>
                 <ThemedText type="statLabel" themeColor="textSecondary">
                   Service History
@@ -164,21 +302,37 @@ export default function MaintenanceScreen() {
                 </ThemedText>
               ) : (
                 records.map((record) => (
-                  <ThemedView key={record.id} type="backgroundElement" style={styles.card}>
-                    <ThemedText type="smallBold">{TYPE_LABELS[record.type]}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {new Date(record.performed_at).toLocaleDateString()}
-                      {record.odometer_km != null
-                        ? ` · ${formatDistance(record.odometer_km * 1000, units)} ${distanceUnitLabel(units)}`
-                        : ''}
-                      {record.cost != null ? ` · $${record.cost.toFixed(2)}` : ''}
-                    </ThemedText>
-                    {record.notes ? (
+                  <Pressable
+                    key={record.id}
+                    onPress={() => router.push({ pathname: '/(app)/maintenance/edit-service', params: { id: record.id } })}>
+                    <ThemedView type="backgroundElement" style={styles.card}>
+                      <View style={styles.cardHeaderRow}>
+                        <ThemedText type="smallBold">{TYPE_LABELS[record.type]}</ThemedText>
+                        <View style={styles.cardHeaderRight}>
+                          {record.attachments.length > 0 ? (
+                            <ThemedText type="small" themeColor="textSecondary">
+                              📎 {record.attachments.length}
+                            </ThemedText>
+                          ) : null}
+                          <ThemedText type="default" themeColor="textSecondary">
+                            ›
+                          </ThemedText>
+                        </View>
+                      </View>
                       <ThemedText type="small" themeColor="textSecondary">
-                        {record.notes}
+                        {new Date(record.performed_at).toLocaleDateString()}
+                        {record.odometer_km != null
+                          ? ` · ${formatDistance(record.odometer_km * 1000, units)} ${distanceUnitLabel(units)}`
+                          : ''}
+                        {record.cost != null ? ` · $${record.cost.toFixed(2)}` : ''}
                       </ThemedText>
-                    ) : null}
-                  </ThemedView>
+                      {record.notes ? (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {record.notes}
+                        </ThemedText>
+                      ) : null}
+                    </ThemedView>
+                  </Pressable>
                 ))
               )}
 
@@ -198,12 +352,20 @@ export default function MaintenanceScreen() {
                 </ThemedText>
               ) : (
                 fuelLogs.map((log) => (
-                  <ThemedView key={log.id} type="backgroundElement" style={styles.card}>
-                    <ThemedText type="smallBold">
-                      {new Date(log.filled_at).toLocaleDateString()} {log.full_tank ? '· Full tank' : '· Partial'}
-                    </ThemedText>
+                  <Pressable
+                    key={log.id}
+                    onPress={() => router.push({ pathname: '/(app)/maintenance/edit-fuel', params: { id: log.id } })}>
+                  <ThemedView type="backgroundElement" style={styles.card}>
+                    <View style={styles.cardHeaderRow}>
+                      <ThemedText type="smallBold">
+                        {new Date(log.filled_at).toLocaleDateString()} {log.full_tank ? '· Full tank' : '· Partial'}
+                      </ThemedText>
+                      <ThemedText type="default" themeColor="textSecondary">
+                        ›
+                      </ThemedText>
+                    </View>
                     <ThemedText type="small" themeColor="textSecondary">
-                      {log.liters != null ? `${log.liters}L` : ''}
+                      {log.liters != null ? `${formatVolume(log.liters, units)} ${volumeUnitLabel(units)}` : ''}
                       {log.cost != null ? ` · $${log.cost.toFixed(2)}` : ''}
                     </ThemedText>
                     {log.distance_since_last_full_km != null ? (
@@ -212,6 +374,44 @@ export default function MaintenanceScreen() {
                       </ThemedText>
                     ) : null}
                   </ThemedView>
+                  </Pressable>
+                ))
+              )}
+
+              <View style={[styles.sectionHeader, styles.sectionSpacing]}>
+                <ThemedText type="statLabel" themeColor="textSecondary">
+                  Expenses
+                </ThemedText>
+                <AddButton
+                  onPress={() =>
+                    router.push({ pathname: '/(app)/maintenance/new-expense', params: { bikeId: selectedBike.id } })
+                  }
+                />
+              </View>
+              {expenses.length === 0 ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  No expenses logged yet.
+                </ThemedText>
+              ) : (
+                expenses.map((expense) => (
+                  <Pressable
+                    key={expense.id}
+                    onPress={() =>
+                      router.push({ pathname: '/(app)/maintenance/edit-expense', params: { id: expense.id } })
+                    }>
+                    <ThemedView type="backgroundElement" style={styles.card}>
+                      <View style={styles.cardHeaderRow}>
+                        <ThemedText type="smallBold">{EXPENSE_CATEGORY_LABELS[expense.category]}</ThemedText>
+                        <ThemedText type="default" themeColor="textSecondary">
+                          ›
+                        </ThemedText>
+                      </View>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {new Date(expense.incurred_at).toLocaleDateString()} · ${expense.amount.toFixed(2)}
+                        {expense.description ? ` · ${expense.description}` : ''}
+                      </ThemedText>
+                    </ThemedView>
+                  </Pressable>
                 ))
               )}
             </View>
@@ -247,6 +447,22 @@ const styles = StyleSheet.create({
     gap: Spacing.half,
     marginBottom: Spacing.two,
   },
+  suggestedCard: {
+    opacity: 0.75,
+  },
+  suggestedHint: {
+    marginTop: -Spacing.half,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
   sections: {
     gap: Spacing.one,
   },
@@ -257,6 +473,19 @@ const styles = StyleSheet.create({
   },
   sectionSpacing: {
     marginTop: Spacing.four,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  dueSection: {
+    gap: Spacing.one,
+    marginBottom: Spacing.four,
+  },
+  dueRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   addButton: {
     width: ADD_BUTTON_SIZE,

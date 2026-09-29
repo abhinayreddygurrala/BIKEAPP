@@ -64,6 +64,15 @@ export default function AppLayout() {
         options={{ headerShown: true, title: 'Bike', headerBackTitle: 'My Bikes' }}
       />
       <Stack.Screen
+        name="bikes/edit"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Edit Bike',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
         name="maintenance/new-service"
         options={{
           presentation: 'modal',
@@ -78,6 +87,24 @@ export default function AppLayout() {
           presentation: 'modal',
           headerShown: true,
           title: 'Log Fuel-Up',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
+        name="maintenance/edit-service"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Edit Service',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
+        name="maintenance/edit-fuel"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Edit Fuel-Up',
           headerLeft: CancelHeaderButton,
         }}
       />

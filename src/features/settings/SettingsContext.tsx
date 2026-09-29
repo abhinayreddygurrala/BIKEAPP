@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import type { Units } from '@/features/ride-tracking/rideMath';
-import { getPhotoUri, savePhoto } from '@/lib/localPhotoStorage';
+import { deletePhoto, getPhotoUri, savePhoto } from '@/lib/localPhotoStorage';
 import { getLocalSettings, updateLocalSettings } from './settingsLocalDb';
 
 export type LocalProfile = {
@@ -17,6 +17,7 @@ type SettingsContextValue = {
   setUnits: (units: Units) => Promise<void>;
   updateProfile: (updates: Partial<Pick<LocalProfile, 'display_name' | 'bio'>>) => Promise<void>;
   setAvatar: (localUri: string) => Promise<void>;
+  removeAvatar: () => Promise<void>;
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -63,6 +64,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         const avatarUrl = `${getPhotoUri('avatar', AVATAR_ENTITY_ID)}?updated=${Date.now()}`;
         setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
         await updateLocalSettings({ avatar_filename: `${AVATAR_ENTITY_ID}.jpg` });
+      },
+      removeAvatar: async () => {
+        deletePhoto('avatar', AVATAR_ENTITY_ID);
+        setProfile((prev) => (prev ? { ...prev, avatar_url: null } : prev));
+        await updateLocalSettings({ avatar_filename: null });
       },
     }),
     [isLoading, profile, units]

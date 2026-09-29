@@ -1,4 +1,5 @@
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -27,6 +28,13 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    // Portrait everywhere by default — the ride recording screen is the one
+    // place that opts back into landscape (for a horizontal handlebar
+    // mount) and restores this on its own way out.
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={DarkTheme}>

@@ -99,7 +99,16 @@ export function DragSheet({ visible, onClose, children, contentStyle }: DragShee
   if (!mounted) return null;
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+      // iOS's Modal silently defaults to portrait-only unless told otherwise
+      // — without this, opening any sheet (e.g. the bike picker) while
+      // recording a ride in landscape would snap the whole interface back
+      // to portrait and get stuck there until the sheet closes.
+      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
       <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>

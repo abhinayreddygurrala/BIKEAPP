@@ -145,6 +145,7 @@ export function useRideRecorder() {
     // Cross-reference the sensor-detected curve events against GPS to get
     // fastest-speed and longest-distance per curve, not just steepest angle.
     const curveRecords = computeCurveRecords(lean.getCurveEvents(), finalPoints);
+    const finalLean = lean.getFinalStats();
 
     await updateLocalRideStats(rideId, {
       distance_meters: finalStats.distanceMeters,
@@ -153,8 +154,8 @@ export function useRideRecorder() {
       max_speed_kmh: finalStats.maxSpeedKmh,
       elevation_gain_m: finalStats.elevationGainM,
       elevation_loss_m: finalStats.elevationLossM,
-      lean_max_deg: lean.maxDeg,
-      lean_avg_deg: lean.avgDeg,
+      lean_max_deg: finalLean.maxDeg,
+      lean_avg_deg: finalLean.avgDeg,
       stopped_seconds: finalStats.stoppedSeconds,
       accel_0_60_seconds: finalStats.accel0To60Seconds,
       accel_0_100_seconds: finalStats.accel0To100Seconds,
@@ -169,9 +170,9 @@ export function useRideRecorder() {
       fastest_curve_right_kmh: curveRecords.fastestRightKmh,
       longest_curve_left_m: curveRecords.longestLeftM,
       longest_curve_right_m: curveRecords.longestRightM,
-      wheelie_count: lean.wheelieCount,
-      longest_wheelie_seconds: lean.longestWheelieSeconds,
-      peak_lateral_g: lean.peakG,
+      wheelie_count: finalLean.wheelieCount,
+      longest_wheelie_seconds: finalLean.longestWheelieSeconds,
+      peak_lateral_g: finalLean.peakG,
     });
     await finalizeLocalRide(rideId, new Date().toISOString(), routePolyline, 'stopped');
     await setActiveRideId(null);
@@ -181,16 +182,7 @@ export function useRideRecorder() {
     setStatus('stopped');
 
     return rideId;
-  }, [
-    rideId,
-    stopPolling,
-    lean.maxDeg,
-    lean.avgDeg,
-    lean.wheelieCount,
-    lean.longestWheelieSeconds,
-    lean.peakG,
-    lean.getCurveEvents,
-  ]);
+  }, [rideId, stopPolling, lean.getCurveEvents, lean.getFinalStats]);
 
   const coordinates = useMemo(
     () => points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
@@ -204,15 +196,10 @@ export function useRideRecorder() {
     coordinates,
     stats,
     lean: {
-      currentDeg: lean.currentDeg,
-      maxDeg: lean.maxDeg,
-      avgDeg: lean.avgDeg,
-      curveCount: lean.curveCount,
+      leanDegShared: lean.leanDegShared,
+      currentDegRounded: lean.currentDegRounded,
       steepestLeanLeftDeg: lean.steepestLeanLeftDeg,
       steepestLeanRightDeg: lean.steepestLeanRightDeg,
-      wheelieCount: lean.wheelieCount,
-      longestWheelieSeconds: lean.longestWheelieSeconds,
-      peakG: lean.peakG,
     },
     start,
     pause,

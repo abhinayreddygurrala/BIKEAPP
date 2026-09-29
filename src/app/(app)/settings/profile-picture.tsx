@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import { Alert, Image, StyleSheet, View, type AlertButton } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import type { ImagePickerOptions } from 'expo-image-picker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -28,45 +29,86 @@ const AVATAR_SIZE = 160;
 
 export default function ProfilePictureScreen() {
   const theme = useTheme();
-  const { profile, setAvatar } = useSettings();
+  const { profile, setAvatar, removeAvatar } = useSettings();
   const [localUri, setLocalUri] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [removed, setRemoved] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const displayUri = localUri ?? profile?.avatar_url ?? null;
+  const displayUri = removed ? null : (localUri ?? profile?.avatar_url ?? null);
 
-  const onChoosePhoto = async () => {
+  const pickFrom = async (source: 'camera' | 'library') => {
     setError(null);
     if (!ImagePicker) {
       setError('Photo picker is unavailable right now — try force-quitting and reopening the app.');
       return;
     }
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    const permission =
+      source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      setError('Photo library access is required to set a profile picture.');
+      setError(
+        source === 'camera'
+          ? 'Camera access is required to take a profile picture.'
+          : 'Photo library access is required to set a profile picture.'
+      );
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const options: ImagePickerOptions = {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
-    });
+    };
+    const result =
+      source === 'camera'
+        ? await ImagePicker.launchCameraAsync(options)
+        : await ImagePicker.launchImageLibraryAsync(options);
     if (result.canceled || !result.assets[0]) return;
 
     const pickedUri = result.assets[0].uri;
     setLocalUri(pickedUri);
+    setRemoved(false);
 
-    setUploading(true);
+    setBusy(true);
     try {
       await setAvatar(pickedUri);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to upload photo');
+      setError(e instanceof Error ? e.message : 'Failed to save photo');
       setLocalUri(null);
     } finally {
-      setUploading(false);
+      setBusy(false);
     }
+  };
+
+  const onRemovePhoto = async () => {
+    setError(null);
+    setRemoved(true);
+    setLocalUri(null);
+    setBusy(true);
+    try {
+      await removeAvatar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove photo');
+      setRemoved(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onChangePhoto = () => {
+    const buttons: AlertButton[] = [
+      { text: 'Take Photo', onPress: () => pickFrom('camera') },
+      { text: 'Choose from Library', onPress: () => pickFrom('library') },
+    ];
+    if (displayUri) {
+      buttons.push({ text: 'Remove Photo', style: 'destructive', onPress: onRemovePhoto });
+    }
+    buttons.push({ text: 'Cancel', style: 'cancel' });
+    Alert.alert('Profile Photo', undefined, buttons);
   };
 
   return (
@@ -88,7 +130,7 @@ export default function ProfilePictureScreen() {
           </ThemedText>
         ) : null}
 
-        <PrimaryButton label="Choose Photo" onPress={onChoosePhoto} loading={uploading} />
+        <PrimaryButton label="Change Photo" onPress={onChangePhoto} loading={busy} />
       </SafeAreaView>
     </ThemedView>
   );

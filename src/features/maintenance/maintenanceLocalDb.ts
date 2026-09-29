@@ -1,6 +1,15 @@
 import { getDb } from '@/lib/localDb';
+import type { AttachmentKind } from '@/lib/localAttachmentStorage';
 
-export type MaintenanceType = 'oil_change' | 'chain' | 'tires' | 'brake_pads' | 'service' | 'other';
+export type MaintenanceType =
+  | 'oil_change'
+  | 'chain'
+  | 'tires'
+  | 'brake_pads'
+  | 'valve_adjustment'
+  | 'service'
+  | 'mod'
+  | 'other';
 
 export type LocalMaintenanceRecord = {
   id: string;
@@ -12,7 +21,14 @@ export type LocalMaintenanceRecord = {
   notes: string | null;
   next_due_odometer_km: number | null;
   next_due_date: string | null;
-  receipt_filename: string | null;
+  created_at: string;
+};
+
+export type LocalMaintenanceAttachment = {
+  id: string;
+  record_id: string;
+  filename: string;
+  kind: AttachmentKind;
   created_at: string;
 };
 
@@ -23,8 +39,8 @@ export async function createLocalMaintenanceRecord(
   const db = await getDb();
   await db.runAsync(
     `INSERT INTO maintenance_records_local
-      (id, bike_id, type, performed_at, odometer_km, cost, notes, next_due_odometer_km, next_due_date, receipt_filename, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, bike_id, type, performed_at, odometer_km, cost, notes, next_due_odometer_km, next_due_date, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       record.bike_id,
@@ -35,7 +51,6 @@ export async function createLocalMaintenanceRecord(
       record.notes,
       record.next_due_odometer_km,
       record.next_due_date,
-      record.receipt_filename,
       new Date().toISOString(),
     ]
   );
@@ -66,4 +81,39 @@ export async function listLocalMaintenanceRecords(bikeId: string): Promise<Local
     `SELECT * FROM maintenance_records_local WHERE bike_id = ? ORDER BY performed_at DESC`,
     [bikeId]
   );
+}
+
+export async function getLocalMaintenanceRecord(id: string): Promise<LocalMaintenanceRecord | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<LocalMaintenanceRecord>(
+    `SELECT * FROM maintenance_records_local WHERE id = ?`,
+    [id]
+  );
+  return row ?? null;
+}
+
+export async function addLocalMaintenanceAttachment(attachment: LocalMaintenanceAttachment): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO maintenance_attachments_local (id, record_id, filename, kind, created_at) VALUES (?, ?, ?, ?, ?)`,
+    [attachment.id, attachment.record_id, attachment.filename, attachment.kind, attachment.created_at]
+  );
+}
+
+export async function listLocalMaintenanceAttachments(recordId: string): Promise<LocalMaintenanceAttachment[]> {
+  const db = await getDb();
+  return db.getAllAsync<LocalMaintenanceAttachment>(
+    `SELECT * FROM maintenance_attachments_local WHERE record_id = ? ORDER BY created_at ASC`,
+    [recordId]
+  );
+}
+
+export async function deleteLocalMaintenanceAttachment(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM maintenance_attachments_local WHERE id = ?`, [id]);
+}
+
+export async function deleteLocalMaintenanceAttachmentsForRecord(recordId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM maintenance_attachments_local WHERE record_id = ?`, [recordId]);
 }

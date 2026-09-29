@@ -13,6 +13,7 @@ export type RideListItemProps = {
   units: Units;
   pinned?: boolean;
   onPress?: () => void;
+  onMenuPress?: () => void;
 };
 
 export function RideListItem({
@@ -23,6 +24,7 @@ export function RideListItem({
   units,
   pinned,
   onPress,
+  onMenuPress,
 }: RideListItemProps) {
   const date = new Date(startedAt);
 
@@ -31,9 +33,16 @@ export function RideListItem({
       <ThemedView type="backgroundElement" style={styles.card}>
         <View style={styles.header}>
           <ThemedText type="smallBold" numberOfLines={1} style={styles.title}>
+            {pinned ? '📌 ' : ''}
             {title}
           </ThemedText>
-          {pinned ? <ThemedText type="default">📌</ThemedText> : null}
+          {onMenuPress ? (
+            <Pressable onPress={onMenuPress} hitSlop={8} style={styles.menuButton}>
+              <ThemedText type="default" themeColor="textSecondary">
+                ⋯
+              </ThemedText>
+            </Pressable>
+          ) : null}
         </View>
         <ThemedText type="small" themeColor="textSecondary">
           {date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -65,6 +74,9 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
+  },
+  menuButton: {
+    paddingHorizontal: Spacing.one,
   },
   statsRow: {
     flexDirection: 'row',
