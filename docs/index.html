@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odomap</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --text: #1c1b1a;
+    --text-secondary: #6b6864;
+    --accent: #b8501c;
+    --border: #e5e3df;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0b0d;
+      --text: #f2f0ed;
+      --text-secondary: #9c9892;
+      --accent: #e1802f;
+      --border: #2a2826;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    padding: 20px;
+  }
+  .card { max-width: 420px; text-align: center; }
+  h1 { font-family: Georgia, serif; font-size: 32px; margin: 0 0 8px; }
+  p { color: var(--text-secondary); margin: 0 0 28px; }
+  .links { display: flex; flex-direction: column; gap: 12px; }
+  a {
+    display: block;
+    padding: 14px 20px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  a:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Odomap</h1>
+    <p>Ride tracking for motorcyclists &mdash; fully on your phone.</p>
+    <div class="links">
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="support.html">Support</a>
+    </div>
+  </div>
+</body>
+</html>

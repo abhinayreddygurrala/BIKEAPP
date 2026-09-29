@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odomap Support</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #f2f1ee;
+    --text: #1c1b1a;
+    --text-secondary: #6b6864;
+    --accent: #b8501c;
+    --border: #e5e3df;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0b0d;
+      --surface: #17161a;
+      --text: #f2f0ed;
+      --text-secondary: #9c9892;
+      --accent: #e1802f;
+      --border: #2a2826;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0b0d;
+    --surface: #17161a;
+    --text: #f2f0ed;
+    --text-secondary: #9c9892;
+    --accent: #e1802f;
+    --border: #2a2826;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.6;
+    padding-inline: 20px;
+    padding-block: 48px;
+  }
+  .page { max-width: 680px; margin: 0 auto; }
+  .eyebrow {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-family: Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(28px, 6vw, 38px);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+  }
+  .meta { color: var(--text-secondary); font-size: 14px; margin: 0 0 40px; max-width: 56ch; }
+  h2 {
+    font-family: Georgia, serif;
+    font-weight: 600;
+    font-size: 20px;
+    margin: 36px 0 12px;
+  }
+  p { margin: 0 0 14px; max-width: 62ch; }
+  .contact-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin: 8px 0 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .contact-label { font-size: 13px; color: var(--text-secondary); margin: 0 0 4px; }
+  .contact-value {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 16px;
+    color: var(--text);
+  }
+  .copy-btn {
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    background: none;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  .copy-btn:active { opacity: 0.7; }
+  .faq-item { padding: 16px 0; border-bottom: 1px solid var(--border); }
+  .faq-item:last-child { border-bottom: none; }
+  .faq-q { font-weight: 600; margin: 0 0 6px; }
+  .faq-a { color: var(--text-secondary); font-size: 15px; margin: 0; max-width: 60ch; }
+  a { color: var(--accent); }
+  footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  @media (max-width: 480px) {
+    body { padding-inline: 16px; padding-block: 32px; }
+    .contact-card { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Odomap</p>
+  <h1>Support</h1>
+  <p class="meta">Odomap is a ride-tracking app for motorcyclists. It runs entirely on your phone &mdash; no account needed, and none of your data ever leaves your device.</p>
+
+  <div class="contact-card">
+    <div>
+      <p class="contact-label">Email support</p>
+      <p class="contact-value" id="email">gurralaabhinayreddy@gmail.com</p>
+    </div>
+    <button class="copy-btn" onclick="copyEmail()" id="copyBtn">Copy</button>
+  </div>
+
+  <h2>Common questions</h2>
+
+  <div class="faq-item">
+    <p class="faq-q">Do I need to create an account?</p>
+    <p class="faq-a">No. Odomap opens straight to your data &mdash; there's no sign-in, and nothing to set up.</p>
+  </div>
+
+  <div class="faq-item">
+    <p class="faq-q">Where is my data stored?</p>
+    <p class="faq-a">Only on your phone. There's no cloud sync, so if you switch phones, use Settings &rarr; Export My Data first to save a backup file before setting up the new device.</p>
+  </div>
+
+  <div class="faq-item">
+    <p class="faq-q">How do I back up my rides, bikes, and maintenance history?</p>
+    <p class="faq-a">Go to Settings &rarr; Export My Data. This creates a single file with all your records, which you can save anywhere using the share sheet.</p>
+  </div>
+
+  <div class="faq-item">
+    <p class="faq-q">Why does Odomap ask for location access in the background?</p>
+    <p class="faq-a">Only while you're actively recording a ride, so your route keeps recording if your phone locks or you switch apps mid-ride.</p>
+  </div>
+
+  <div class="faq-item">
+    <p class="faq-q">The AI trip planner isn't available &mdash; why?</p>
+    <p class="faq-a">It requires Apple Intelligence to be turned on for your phone (Settings &rarr; Apple Intelligence &amp; Siri), and a phone that supports it.</p>
+  </div>
+
+  <div class="faq-item">
+    <p class="faq-q">I found a bug or have a feature request.</p>
+    <p class="faq-a">Email the address above with as much detail as you can &mdash; what you were doing, what you expected, and what happened instead.</p>
+  </div>
+
+  <footer>
+    See also the <a href="privacy.html">Odomap Privacy Policy</a>.
+  </footer>
+</div>
+<script>
+  function copyEmail() {
+    var email = document.getElementById('email').textContent;
+    var btn = document.getElementById('copyBtn');
+    function done() {
+      var original = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = original; }, 1500);
+    }
+    try {
+      navigator.clipboard.writeText(email).then(done, done);
+    } catch (e) {
+      done();
+    }
+  }
+</script>
+</body>
+</html>
