@@ -175,6 +175,16 @@ export function getDb() {
         }
       }
 
+      // Same lightweight migration for the accessibility preferences.
+      const newSettingsColumns = ["text_scale REAL NOT NULL DEFAULT 1", "theme_mode TEXT NOT NULL DEFAULT 'system'"];
+      for (const column of newSettingsColumns) {
+        try {
+          await db.execAsync(`ALTER TABLE settings_local ADD COLUMN ${column};`);
+        } catch {
+          // Column already exists from a previous run — fine.
+        }
+      }
+
       return db;
     });
   }

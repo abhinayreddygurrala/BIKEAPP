@@ -3,6 +3,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT, type LatLng } from 'react-native-maps';
 
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type RouteMapProps = {
@@ -38,6 +39,7 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
   const lastUserLocationRef = useRef<LatLng | null>(null);
   const lastRouteCoordinateRef = useRef<LatLng | null>(null);
   const theme = useTheme();
+  const scheme = useColorScheme();
 
   useEffect(() => {
     if (coordinates.length > 0) lastRouteCoordinateRef.current = coordinates[coordinates.length - 1];
@@ -88,7 +90,7 @@ export const RouteMap = forwardRef<RouteMapHandle, RouteMapProps>(function Route
         ref={mapRef}
         provider={PROVIDER_DEFAULT}
         style={StyleSheet.absoluteFill}
-        userInterfaceStyle="dark"
+        userInterfaceStyle={scheme === 'dark' ? 'dark' : 'light'}
         showsUserLocation={showsUserLocation}
         followsUserLocation={followsUserLocation}
         showsCompass={false}

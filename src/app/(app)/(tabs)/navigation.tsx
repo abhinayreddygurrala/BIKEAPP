@@ -12,6 +12,7 @@ import { Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
 import { getAllLocalRides } from '@/features/ride-tracking/rideLocalDb';
 import { decodeRoutePolyline, distanceUnitLabel, formatDistance, formatDuration } from '@/features/ride-tracking/rideMath';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { planRoute, type LatLng, type RouteOptions } from '@/services/routePlannerService';
 import { askTripPlanner, isTripPlannerAvailable } from '@/services/tripPlannerService';
@@ -33,6 +34,7 @@ const MAP_EDGE_PADDING = { top: 60, right: 50, bottom: 60, left: 50 };
 
 export default function NavigationScreen() {
   const theme = useTheme();
+  const scheme = useColorScheme();
   const { units } = useSettings();
   const mapRef = useRef<MapView>(null);
 
@@ -172,12 +174,14 @@ export default function NavigationScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.flex}>
+      {/* Top inset only: the content scrolls under the tab bar, and iOS adds
+          just enough end padding for the last field to clear it. */}
+      <SafeAreaView style={styles.flex} edges={['top']}>
         <MapView
           ref={mapRef}
           provider={PROVIDER_DEFAULT}
           style={styles.map}
-          userInterfaceStyle="dark"
+          userInterfaceStyle={scheme === 'dark' ? 'dark' : 'light'}
           showsUserLocation
           showsCompass={false}>
           {mode === 'plan' && destination ? (
@@ -202,7 +206,17 @@ export default function NavigationScreen() {
           <SegmentedControl value={mode} options={MODE_OPTIONS} onChange={setMode} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.content}>
+        {/* The inputs sit under a fixed map, so the keyboard would otherwise
+            cover the lower ones (Ask About a Place). This makes iOS pad the
+            list by the keyboard's height and scroll the focused field into
+            view; "handled" lets Go/Ask buttons work on the first tap while
+            the keyboard is up. */}
+        <ScrollView
+          contentContainerStyle={styles.content}
+          contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled">
+
           {mode === 'plan' ? (
             <>
               <ThemedText type="statLabel" themeColor="textSecondary">
@@ -317,7 +331,7 @@ export default function NavigationScreen() {
                 <PrimaryButton label="Ask" onPress={onAskAi} loading={aiLoading} disabled={!aiAvailable} style={styles.goButton} />
               </View>
 
-              {aiLoading ? <ActivityIndicator color="#fff" style={styles.aiLoading} /> : null}
+              {aiLoading ? <ActivityIndicator color={theme.text} style={styles.aiLoading} /> : null}
               {aiError ? (
                 <ThemedText type="small" style={{ color: theme.danger }}>
                   {aiError}
@@ -335,7 +349,7 @@ export default function NavigationScreen() {
                 My Roads
               </ThemedText>
               {myRides === null ? (
-                <ActivityIndicator color="#fff" style={styles.aiLoading} />
+                <ActivityIndicator color={theme.text} style={styles.aiLoading} />
               ) : myRides.length === 0 ? (
                 <ThemedText type="small" themeColor="textSecondary">
                   Record a ride and it&rsquo;ll show up here as a line on the map.

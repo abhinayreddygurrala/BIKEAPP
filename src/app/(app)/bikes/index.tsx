@@ -5,12 +5,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { FloatingActions } from '@/components/ui/FloatingActions';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { listBikes, type Bike } from '@/services/bikesService';
 
 export default function BikesScreen() {
+  const theme = useTheme();
   const [bikes, setBikes] = useState<Bike[]>([]);
+  const [actionsHeight, setActionsHeight] = useState(0);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(() => {
@@ -31,14 +35,21 @@ export default function BikesScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
+      <SafeAreaView style={styles.flex} edges={['top']}>
         {!loaded ? (
-          <ActivityIndicator color="#fff" style={styles.loading} />
+          <ActivityIndicator color={theme.text} style={styles.loading} />
         ) : (
+          // Runs to the bottom of the screen under the floating Add Bike
+          // button; the padding lets the last bike scroll fully clear of it.
           <FlatList
             data={bikes}
             keyExtractor={(item) => item.id}
-            contentContainerStyle={bikes.length === 0 ? styles.emptyList : styles.list}
+            style={styles.flex}
+            contentContainerStyle={[
+              bikes.length === 0 ? styles.emptyList : styles.list,
+              { paddingBottom: actionsHeight + Spacing.two },
+            ]}
+            scrollIndicatorInsets={{ bottom: actionsHeight }}
             renderItem={({ item }) => (
               <Pressable
                 onPress={() => router.push({ pathname: '/(app)/bikes/[id]', params: { id: item.id } })}>
@@ -57,9 +68,11 @@ export default function BikesScreen() {
             }
           />
         )}
-        <Link href="/(app)/bikes/new" asChild>
-          <PrimaryButton label="🏍️ Add Bike" />
-        </Link>
+        <FloatingActions onHeightChange={setActionsHeight}>
+          <Link href="/(app)/bikes/new" asChild>
+            <PrimaryButton label="🏍️ Add Bike" />
+          </Link>
+        </FloatingActions>
       </SafeAreaView>
     </ThemedView>
   );
@@ -67,19 +80,17 @@ export default function BikesScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.four,
-    gap: Spacing.three,
-  },
+  // Side padding inside the list (not around it) so card shadows have room
+  // and aren't sliced off at the list's edges.
   list: {
     gap: Spacing.two,
-    paddingBottom: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.four,
   },
   emptyList: {
     flexGrow: 1,
     justifyContent: 'center',
+    paddingHorizontal: Spacing.four,
   },
   emptyText: {
     textAlign: 'center',

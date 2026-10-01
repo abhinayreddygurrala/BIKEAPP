@@ -19,9 +19,11 @@ import {
   formatSpeed,
   speedUnitLabel,
 } from '@/features/ride-tracking/rideMath';
+import { useTheme } from '@/hooks/use-theme';
 import { listRides } from '@/services/ridesService';
 
 export default function RecordsScreen() {
+  const theme = useTheme();
   const { units } = useSettings();
   const [loaded, setLoaded] = useState(false);
   const [aggregate, setAggregate] = useState(computeAggregateStats([]));
@@ -46,7 +48,7 @@ export default function RecordsScreen() {
   if (!loaded) {
     return (
       <ThemedView style={styles.flex}>
-        <ActivityIndicator color="#fff" style={styles.loading} />
+        <ActivityIndicator color={theme.text} style={styles.loading} />
       </ThemedView>
     );
   }

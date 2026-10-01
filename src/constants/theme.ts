@@ -7,11 +7,8 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
-// Dark, rugged/moto palette. The app forces userInterfaceStyle "dark" (see
-// app.config.ts), so `light` isn't reachable today — kept identical to
-// `dark` so the Colors[light|dark] shape stays intact for a future
-// system-appearance mode without a breaking change.
-const moto = {
+// Dark, rugged/moto palette — the app's original look.
+const dark = {
   text: '#F5F5F7',
   background: '#0B0B0D',
   backgroundElement: '#1C1C1F',
@@ -24,7 +21,26 @@ const moto = {
   accentText: '#FFFFFF',
   danger: '#FF453A',
   success: '#32D74B',
+  warning: '#FFB020',
 } as const;
+
+// Light counterpart. Cards (`backgroundElement`) are white on a light-gray
+// page, the reverse of dark's lighter-card-on-darker-page. Accent, danger,
+// success and warning are deepened versus dark so they stay readable as
+// *text* on a light surface (the dark-mode values are too pale there).
+const light: Record<keyof typeof dark, string> = {
+  text: '#0B0B0D',
+  background: '#F2F2F7',
+  backgroundElement: '#FFFFFF',
+  backgroundSelected: '#E5E5EA',
+  textSecondary: '#6C6C72',
+  border: 'rgba(11,11,13,0.10)',
+  accent: '#D93A0F',
+  accentText: '#FFFFFF',
+  danger: '#D70015',
+  success: '#248A3D',
+  warning: '#B25E00',
+};
 
 // Elevation presets for surfaces that should read as sitting above the
 // background (cards, sheets, buttons) rather than flat-printed on it.
@@ -38,6 +54,21 @@ export const Shadows = {
       shadowRadius: 16,
     },
     default: { elevation: 6 },
+  }),
+  // Light mode's version of `card`. The dark one is invisible on a near-black
+  // page but reads as a grimy gray halo on a light one — worse in lists, where
+  // neighbouring cards' shadows pile up into gray bands in the gaps and get
+  // hard-clipped at the list's edges. A tight, faint shadow gives the same
+  // lift (white card on a gray page does most of the work, Apple-style)
+  // without spilling anywhere.
+  cardLight: Platform.select({
+    ios: {
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.06,
+      shadowRadius: 3,
+    },
+    default: { elevation: 1 },
   }),
   raised: Platform.select({
     ios: {
@@ -64,8 +95,8 @@ export const Shadows = {
 } as const;
 
 export const Colors = {
-  light: moto,
-  dark: moto,
+  light,
+  dark,
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;

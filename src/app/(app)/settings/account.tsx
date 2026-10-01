@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { StyleSheet, TextInput } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -49,37 +49,43 @@ export default function AccountScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
-        <ThemedText type="statLabel" themeColor="textSecondary">
-          Display Name
-        </ThemedText>
-        <TextInput
-          value={displayName}
-          onChangeText={setDisplayName}
-          placeholder="Display name"
-          placeholderTextColor={theme.textSecondary}
-          style={inputStyle}
-        />
+      <SafeAreaView style={styles.flex} edges={['bottom']}>
+        {/* Same keyboard handling as the app's other forms: without it, the
+            keyboard covers the Save button while you're typing a bio. */}
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+            <ThemedText type="statLabel" themeColor="textSecondary">
+              Display Name
+            </ThemedText>
+            <TextInput
+              value={displayName}
+              onChangeText={setDisplayName}
+              placeholder="Display name"
+              placeholderTextColor={theme.textSecondary}
+              style={inputStyle}
+            />
 
-        <ThemedText type="statLabel" themeColor="textSecondary" style={styles.label}>
-          Bio
-        </ThemedText>
-        <TextInput
-          value={bio}
-          onChangeText={setBio}
-          placeholder="Say as much as you want"
-          placeholderTextColor={theme.textSecondary}
-          multiline
-          style={[inputStyle, styles.bioInput]}
-        />
+            <ThemedText type="statLabel" themeColor="textSecondary" style={styles.label}>
+              Bio
+            </ThemedText>
+            <TextInput
+              value={bio}
+              onChangeText={setBio}
+              placeholder="Say as much as you want"
+              placeholderTextColor={theme.textSecondary}
+              multiline
+              style={[inputStyle, styles.bioInput]}
+            />
 
-        {error ? (
-          <ThemedText type="small" style={{ color: theme.danger }}>
-            {error}
-          </ThemedText>
-        ) : null}
+            {error ? (
+              <ThemedText type="small" style={{ color: theme.danger }}>
+                {error}
+              </ThemedText>
+            ) : null}
 
-        <PrimaryButton label="Save" onPress={onSave} loading={saving} style={styles.saveButton} />
+            <PrimaryButton label="Save" onPress={onSave} loading={saving} style={styles.saveButton} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
   );
@@ -88,9 +94,8 @@ export default function AccountScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: {
-    flex: 1,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.four,
+    paddingVertical: Spacing.four,
     gap: Spacing.one,
   },
   input: {

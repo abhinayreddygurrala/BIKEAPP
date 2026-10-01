@@ -140,7 +140,7 @@ export default function RecordRideScreen() {
   const warningBanner =
     permissionStep === 'foreground-only' ? (
       <ThemedView type="backgroundElement" style={styles.warningBanner}>
-        <ThemedText type="small" style={{ color: '#FFB020' }}>
+        <ThemedText type="small" style={{ color: theme.warning }}>
           Background access isn&apos;t enabled — recording will pause if you leave the app.
         </ThemedText>
       </ThemedView>

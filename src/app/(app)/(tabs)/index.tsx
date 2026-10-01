@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { FloatingActions } from '@/components/ui/FloatingActions';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { StatCard } from '@/components/ui/StatCard';
 import { RideListItem } from '@/components/ride/RideListItem';
@@ -17,12 +18,16 @@ import { listBikes, type Bike } from '@/services/bikesService';
 import { listRides, PinLimitError, setRidePinned, type RideSummary } from '@/services/ridesService';
 
 export default function RidesScreen() {
+  const theme = useTheme();
   const { units } = useSettings();
   const [rides, setRides] = useState<RideSummary[]>([]);
   const [bikes, setBikes] = useState<Bike[]>([]);
   const [bikeFilter, setBikeFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Measured height of the floating Start/Log buttons, so the list knows how
+  // much room to leave at its end.
+  const [actionsHeight, setActionsHeight] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -78,80 +83,103 @@ export default function RidesScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
-        <View style={styles.titleRow}>
-          <ThemedText type="title" style={styles.title}>
-            Rides
-          </ThemedText>
-          <Pressable onPress={() => router.push('/(app)/records')} hitSlop={8}>
-            <ThemedText type="default" themeColor="accent">
-              🏆 Records
+      <SafeAreaView style={styles.flex} edges={['top']}>
+        <View style={styles.header}>
+          <View style={styles.titleRow}>
+            <ThemedText type="title" style={styles.title}>
+              Rides
             </ThemedText>
-          </Pressable>
+            <Pressable onPress={() => router.push('/(app)/records')} hitSlop={8}>
+              <ThemedText type="default" themeColor="accent">
+                🏆 Records
+              </ThemedText>
+            </Pressable>
+          </View>
+
+          {bikes.length > 0 ? (
+            // Runs edge to edge (the negative margin cancels the screen's side
+            // padding) so chips scroll off the real screen edge instead of
+            // being chopped mid-word at an invisible line inside it.
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterScroll}
+              contentContainerStyle={styles.filterContent}>
+              <FilterChip label="All Bikes" selected={bikeFilter === null} onPress={() => setBikeFilter(null)} />
+              {bikes.map((bike) => (
+                <FilterChip
+                  key={bike.id}
+                  label={bike.name}
+                  selected={bikeFilter === bike.id}
+                  onPress={() => setBikeFilter(bike.id)}
+                />
+              ))}
+            </ScrollView>
+          ) : null}
+
+          {loaded && rides.length > 0 ? (
+            <View style={styles.summaryRow}>
+              <StatCard compact label="Rides" value={String(summary.rideCount)} />
+              <StatCard
+                compact
+                label="Distance"
+                value={formatDistance(summary.totalDistanceMeters, units)}
+                unit={distanceUnitLabel(units)}
+              />
+              <StatCard compact label="Time" value={formatDuration(summary.totalDurationSeconds)} />
+            </View>
+          ) : null}
         </View>
 
-        {bikes.length > 0 ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-            <FilterChip label="All Bikes" selected={bikeFilter === null} onPress={() => setBikeFilter(null)} />
-            {bikes.map((bike) => (
-              <FilterChip
-                key={bike.id}
-                label={bike.name}
-                selected={bikeFilter === bike.id}
-                onPress={() => setBikeFilter(bike.id)}
-              />
-            ))}
-          </ScrollView>
-        ) : null}
-
-        {loaded && rides.length > 0 ? (
-          <View style={styles.summaryRow}>
-            <StatCard compact label="Rides" value={String(summary.rideCount)} />
-            <StatCard
-              compact
-              label="Distance"
-              value={formatDistance(summary.totalDistanceMeters, units)}
-              unit={distanceUnitLabel(units)}
+        <View style={styles.listArea}>
+          {!loaded ? (
+            <ActivityIndicator color={theme.text} style={styles.loading} />
+          ) : (
+            // Fills the screen to the bottom edge, underneath the floating
+            // buttons below — rides fade out beneath them instead of being cut
+            // off on a hard line. The bottom padding (the buttons' own height)
+            // lets the last ride scroll fully clear of them.
+            <FlatList
+              data={filteredRides}
+              keyExtractor={(item) => item.id}
+              style={styles.flex}
+              contentContainerStyle={[
+                filteredRides.length === 0 ? styles.emptyList : styles.list,
+                { paddingBottom: actionsHeight + Spacing.two },
+              ]}
+              scrollIndicatorInsets={{ bottom: actionsHeight }}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.text} />}
+              renderItem={({ item }) => (
+                <RideListItem
+                  title={
+                    item.title ?? new Date(item.started_at).toLocaleDateString(undefined, { weekday: 'long' }) + ' Ride'
+                  }
+                  startedAt={item.started_at}
+                  distanceMeters={item.distance_meters}
+                  durationSeconds={item.duration_seconds}
+                  units={units}
+                  pinned={item.pinned === 1}
+                  onPress={() => router.push({ pathname: '/(app)/ride/[id]', params: { id: item.id } })}
+                  onMenuPress={() => onRideMenuPress(item)}
+                />
+              )}
+              ListEmptyComponent={
+                <ThemedText type="default" themeColor="textSecondary" style={styles.emptyText}>
+                  {bikeFilter ? 'No rides on this bike yet.' : 'No rides recorded yet.'}
+                </ThemedText>
+              }
             />
-            <StatCard compact label="Time" value={formatDuration(summary.totalDurationSeconds)} />
-          </View>
-        ) : null}
+          )}
 
-        {!loaded ? (
-          <ActivityIndicator color="#fff" style={styles.loading} />
-        ) : (
-          <FlatList
-            data={filteredRides}
-            keyExtractor={(item) => item.id}
-            style={styles.flatList}
-            contentContainerStyle={filteredRides.length === 0 ? styles.emptyList : styles.list}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
-            renderItem={({ item }) => (
-              <RideListItem
-                title={item.title ?? new Date(item.started_at).toLocaleDateString(undefined, { weekday: 'long' }) + ' Ride'}
-                startedAt={item.started_at}
-                distanceMeters={item.distance_meters}
-                durationSeconds={item.duration_seconds}
-                units={units}
-                pinned={item.pinned === 1}
-                onPress={() => router.push({ pathname: '/(app)/ride/[id]', params: { id: item.id } })}
-                onMenuPress={() => onRideMenuPress(item)}
-              />
-            )}
-            ListEmptyComponent={
-              <ThemedText type="default" themeColor="textSecondary" style={styles.emptyText}>
-                {bikeFilter ? 'No rides on this bike yet.' : 'No rides recorded yet.'}
-              </ThemedText>
-            }
-          />
-        )}
-
-        <Link href="/(app)/ride/record" asChild>
-          <PrimaryButton label="Start Ride" />
-        </Link>
-        <Link href="/(app)/ride/new" asChild>
-          <PrimaryButton label="Log Past Ride" variant="muted" />
-        </Link>
+          <FloatingActions onHeightChange={setActionsHeight}>
+            <Link href="/(app)/ride/record" asChild>
+              <PrimaryButton label="Start Ride" />
+            </Link>
+            <Link href="/(app)/ride/new" asChild>
+              <PrimaryButton label="Log Past Ride" variant="muted" />
+            </Link>
+          </FloatingActions>
+        </View>
       </SafeAreaView>
     </ThemedView>
   );
@@ -180,8 +208,7 @@ function FilterChip({
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: {
-    flex: 1,
+  header: {
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.four,
     gap: Spacing.three,
@@ -196,9 +223,14 @@ const styles = StyleSheet.create({
   filterScroll: {
     flexGrow: 0,
     flexShrink: 0,
+    marginHorizontal: -Spacing.four,
   },
-  flatList: {
+  filterContent: {
+    paddingHorizontal: Spacing.four,
+  },
+  listArea: {
     flex: 1,
+    marginTop: Spacing.two,
   },
   chip: {
     borderRadius: Spacing.four,
@@ -210,13 +242,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.two,
   },
+  // Side padding lives inside the list (not around it) so card shadows have
+  // room and aren't sliced off at the list's edges.
   list: {
     gap: Spacing.two,
-    paddingBottom: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.two,
   },
   emptyList: {
     flexGrow: 1,
     justifyContent: 'center',
+    paddingHorizontal: Spacing.four,
   },
   emptyText: {
     textAlign: 'center',

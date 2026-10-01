@@ -140,7 +140,7 @@ export default function MaintenanceScreen() {
   if (!loaded) {
     return (
       <ThemedView style={styles.flex}>
-        <ActivityIndicator color="#fff" style={styles.loading} />
+        <ActivityIndicator color={theme.text} style={styles.loading} />
       </ThemedView>
     );
   }
@@ -148,7 +148,7 @@ export default function MaintenanceScreen() {
   if (!selectedBike) {
     return (
       <ThemedView style={styles.flex}>
-        <SafeAreaView style={styles.content}>
+        <SafeAreaView style={styles.content} edges={['top']}>
           <ThemedText type="title">Maintenance</ThemedText>
           {bikes.length === 0 ? (
             <>
@@ -167,6 +167,8 @@ export default function MaintenanceScreen() {
               <FlatList
                 data={bikes}
                 keyExtractor={(item) => item.id}
+                style={styles.fullBleed}
+                contentInsetAdjustmentBehavior="automatic"
                 contentContainerStyle={styles.list}
                 renderItem={({ item }) => (
                   <Pressable onPress={() => setSelectedBikeId(item.id)}>
@@ -188,7 +190,7 @@ export default function MaintenanceScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.content}>
+      <SafeAreaView style={styles.content} edges={['top']}>
         <Pressable onPress={() => setSelectedBikeId(null)}>
           <ThemedText type="link" themeColor="accent">
             ← Bikes
@@ -209,6 +211,8 @@ export default function MaintenanceScreen() {
         <FlatList
           data={[{ kind: 'header' as const }]}
           keyExtractor={() => 'body'}
+          style={styles.fullBleed}
+          contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.list}
           renderItem={() => (
             <View style={styles.sections}>
@@ -437,9 +441,18 @@ const styles = StyleSheet.create({
   emptyText: {
     marginTop: Spacing.two,
   },
+  // The lists span the full screen width (cancelling the screen's side
+  // padding) and carry that padding inside instead, so card shadows aren't
+  // sliced off at the edges. They also scroll under the tab bar, with iOS
+  // adding exactly enough end padding (contentInsetAdjustmentBehavior) for
+  // the last card to clear it.
+  fullBleed: {
+    marginHorizontal: -Spacing.four,
+  },
   list: {
     gap: Spacing.two,
-    paddingBottom: Spacing.six,
+    paddingHorizontal: Spacing.four,
+    paddingBottom: Spacing.four,
   },
   card: {
     borderRadius: Spacing.three,

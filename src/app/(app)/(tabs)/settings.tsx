@@ -11,7 +11,9 @@ import { UnitsSegmentedControl } from '@/components/settings/UnitsSegmentedContr
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useAuth } from '@/features/auth/AuthContext';
 import { useSettings } from '@/features/settings/SettingsContext';
+import { TEXT_SCALE_LABELS, type ThemeMode } from '@/features/settings/settingsLocalDb';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes } from '@/services/bikesService';
 import { exportAllData } from '@/services/exportService';
@@ -20,8 +22,15 @@ import { listRides } from '@/services/ridesService';
 
 const appVersion = Constants.expoConfig?.version;
 
+const THEME_MODE_LABELS: Record<ThemeMode, string> = {
+  system: 'System appearance',
+  light: 'Light mode',
+  dark: 'Dark mode',
+};
+
 export default function SettingsScreen() {
-  const { profile, units, setUnits } = useSettings();
+  const { profile, units, setUnits, textScale, themeMode } = useSettings();
+  const { status: authStatus, user: authUser, signOut } = useAuth();
   const theme = useTheme();
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -40,6 +49,13 @@ export default function SettingsScreen() {
         .catch((e) => console.error('[SettingsScreen] failed to load counts', e));
     }, [])
   );
+
+  const onSignOut = () => {
+    Alert.alert('Sign out?', 'Your rides, bikes, and records stay on this phone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: () => void signOut() },
+    ]);
+  };
 
   const onExport = async () => {
     setExportError(null);
@@ -97,8 +113,13 @@ export default function SettingsScreen() {
 
   return (
     <ThemedView style={styles.flex}>
-      <SafeAreaView style={styles.flex}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {/* Top inset only: the list scrolls under the tab bar, and iOS adds
+          just enough end padding for the last row to clear it. */}
+      <SafeAreaView style={styles.flex} edges={['top']}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}>
           <Animated.View entering={FadeInDown.duration(450)}>
             <SettingsHero
               avatarUri={profile?.avatar_url ?? null}
@@ -110,11 +131,60 @@ export default function SettingsScreen() {
             />
           </Animated.View>
 
+          <Animated.View entering={FadeInDown.delay(50).duration(450)} style={styles.section}>
+            <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
+              Account
+            </ThemedText>
+            {authStatus === 'signedIn' ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.controlCaption}>
+                {authUser ? `Signed in as @${authUser.username}` : 'Signed in'}
+              </ThemedText>
+            ) : null}
+            <ThemedView type="backgroundElement" style={styles.card}>
+              {authStatus === 'signedOut' ? (
+                <SettingsRow
+                  title="Sign In or Create Account"
+                  subtitle="Needed for group chat — your rides stay on this phone"
+                  onPress={() => router.push('/(app)/auth/sign-in')}
+                  showDivider
+                />
+              ) : null}
+              <SettingsRow
+                title="Profile"
+                subtitle="Name & bio"
+                onPress={() => router.push('/(app)/settings/account')}
+                showDivider={authStatus === 'signedIn'}
+              />
+              {authStatus === 'signedIn' ? (
+                <>
+                  <SettingsRow
+                    title="Change Password"
+                    onPress={() => router.push('/(app)/settings/change-password')}
+                    showDivider
+                  />
+                  <SettingsRow title="Sign Out" onPress={onSignOut} showChevron={false} showDivider />
+                  <SettingsRow
+                    title="Delete Account"
+                    destructive
+                    onPress={() => router.push('/(app)/settings/delete-account')}
+                  />
+                </>
+              ) : null}
+            </ThemedView>
+          </Animated.View>
+
           <Animated.View entering={FadeInDown.delay(80).duration(450)} style={styles.section}>
             <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
               Preferences
             </ThemedText>
             <UnitsSegmentedControl value={units} onChange={setUnits} />
+            <ThemedView type="backgroundElement" style={[styles.card, styles.controlGap]}>
+              <SettingsRow
+                title="Accessibility"
+                subtitle={`${THEME_MODE_LABELS[themeMode]} · ${TEXT_SCALE_LABELS[textScale]} text`}
+                onPress={() => router.push('/(app)/settings/accessibility')}
+              />
+            </ThemedView>
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(150).duration(450)} style={styles.section}>
@@ -123,17 +193,9 @@ export default function SettingsScreen() {
             </ThemedText>
             <ThemedView type="backgroundElement" style={styles.card}>
               <SettingsRow
-                icon="🏍️"
                 title="My Bikes"
                 subtitle="Manage your garage"
                 onPress={() => router.push('/(app)/bikes')}
-                showDivider
-              />
-              <SettingsRow
-                icon="👤"
-                title="Account"
-                subtitle="Name & bio"
-                onPress={() => router.push('/(app)/settings/account')}
               />
             </ThemedView>
           </Animated.View>
@@ -144,7 +206,6 @@ export default function SettingsScreen() {
             </ThemedText>
             <ThemedView type="backgroundElement" style={styles.card}>
               <SettingsRow
-                icon="📤"
                 title="Export My Data"
                 subtitle="Save a backup to Drive, Files, or Gmail"
                 onPress={onExport}
@@ -152,7 +213,6 @@ export default function SettingsScreen() {
                 showDivider
               />
               <SettingsRow
-                icon="📥"
                 title="Import My Data"
                 subtitle="Restore from a backup file"
                 onPress={onImport}
@@ -177,13 +237,11 @@ export default function SettingsScreen() {
             </ThemedText>
             <ThemedView type="backgroundElement" style={styles.card}>
               <SettingsRow
-                icon="🔒"
                 title="Privacy Policy"
                 onPress={() => Linking.openURL('https://abhinayreddygurrala.github.io/BIKEAPP/privacy.html')}
                 showDivider
               />
               <SettingsRow
-                icon="💬"
                 title="Support"
                 onPress={() => Linking.openURL('https://abhinayreddygurrala.github.io/BIKEAPP/support.html')}
               />
@@ -195,7 +253,7 @@ export default function SettingsScreen() {
               {appVersion ? `Odomap v${appVersion}` : 'Odomap'}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              Made for the ride. 🏍️
+              Made for the ride.
             </ThemedText>
           </Animated.View>
         </ScrollView>
@@ -220,6 +278,13 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Spacing.three,
     overflow: 'hidden',
+  },
+  controlCaption: {
+    marginBottom: Spacing.one,
+    marginLeft: Spacing.one,
+  },
+  controlGap: {
+    marginTop: Spacing.three,
   },
   exportError: {
     marginTop: Spacing.two,

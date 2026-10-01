@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import { useEffect, useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -31,13 +32,22 @@ export function SelectSheet({
 }: SelectSheetProps) {
   const theme = useTheme();
   const resolvedSections = sections ?? [{ options: options ?? [] }];
+  const scrollRef = useRef<ScrollView>(null);
+
+  // Once the sheet has slid in, flash the scroll bar so it's obvious the
+  // list continues below the fold (the sheet only covers part of the screen).
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setTimeout(() => scrollRef.current?.flashScrollIndicators(), 350);
+    return () => clearTimeout(timer);
+  }, [visible]);
 
   return (
     <DragSheet visible={visible} onClose={onClose}>
       <ThemedText type="smallBold" themeColor="textSecondary" style={styles.title}>
         {title}
       </ThemedText>
-      <ScrollView>
+      <ScrollView ref={scrollRef}>
         {resolvedSections.map((section, sectionIndex) => (
           <View key={section.title ?? sectionIndex}>
             {section.title ? (

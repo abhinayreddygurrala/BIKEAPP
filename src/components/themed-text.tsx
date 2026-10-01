@@ -1,6 +1,7 @@
-import { Platform, StyleSheet, Text, type TextProps } from 'react-native';
+import { Platform, StyleSheet, Text, type TextProps, type TextStyle } from 'react-native';
 
-import { Colors, Fonts, ThemeColor } from '@/constants/theme';
+import { Fonts, ThemeColor } from '@/constants/theme';
+import { useSettings } from '@/features/settings/SettingsContext';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedTextProps = TextProps & {
@@ -20,26 +21,34 @@ export type ThemedTextProps = TextProps & {
 
 export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
   const theme = useTheme();
+  const { textScale } = useSettings();
 
-  return (
-    <Text
-      style={[
-        { color: theme[themeColor ?? 'text'] },
-        type === 'default' && styles.default,
-        type === 'title' && styles.title,
-        type === 'small' && styles.small,
-        type === 'smallBold' && styles.smallBold,
-        type === 'subtitle' && styles.subtitle,
-        type === 'link' && styles.link,
-        type === 'linkPrimary' && styles.linkPrimary,
-        type === 'code' && styles.code,
-        type === 'stat' && styles.stat,
-        type === 'statLabel' && styles.statLabel,
-        style,
-      ]}
-      {...rest}
-    />
-  );
+  const flat: TextStyle = StyleSheet.flatten([
+    { color: theme[themeColor ?? 'text'] },
+    type === 'default' && styles.default,
+    type === 'title' && styles.title,
+    type === 'small' && styles.small,
+    type === 'smallBold' && styles.smallBold,
+    type === 'subtitle' && styles.subtitle,
+    type === 'link' && styles.link,
+    type === 'linkPrimary' && styles.linkPrimary,
+    type === 'linkPrimary' && { color: theme.accent },
+    type === 'code' && styles.code,
+    type === 'stat' && styles.stat,
+    type === 'statLabel' && styles.statLabel,
+    style,
+  ]);
+
+  // The in-app text-size preference. Scaling the flattened result (rather
+  // than only the presets above) also catches call sites that override
+  // fontSize/lineHeight through `style`. iOS's own Dynamic Type still
+  // applies on top of this.
+  if (textScale !== 1) {
+    if (typeof flat.fontSize === 'number') flat.fontSize *= textScale;
+    if (typeof flat.lineHeight === 'number') flat.lineHeight *= textScale;
+  }
+
+  return <Text style={flat} {...rest} />;
 }
 
 const styles = StyleSheet.create({
@@ -77,7 +86,6 @@ const styles = StyleSheet.create({
   linkPrimary: {
     lineHeight: 30,
     fontSize: 14,
-    color: Colors.dark.accent,
   },
   code: {
     fontFamily: Fonts.mono,

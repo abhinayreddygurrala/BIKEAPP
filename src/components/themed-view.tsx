@@ -1,6 +1,7 @@
 import { StyleSheet, View, type ViewProps } from 'react-native';
 
 import { Shadows, ThemeColor } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedViewProps = ViewProps & {
@@ -11,6 +12,7 @@ export type ThemedViewProps = ViewProps & {
 
 export function ThemedView({ style, lightColor, darkColor, type, ...otherProps }: ThemedViewProps) {
   const theme = useTheme();
+  const scheme = useColorScheme();
 
   return (
     <View
@@ -23,7 +25,7 @@ export function ThemedView({ style, lightColor, darkColor, type, ...otherProps }
         type === 'backgroundElement' && {
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.border,
-          ...Shadows.card,
+          ...(scheme === 'dark' ? Shadows.card : Shadows.cardLight),
         },
         style,
       ]}

@@ -32,7 +32,7 @@ const TICK_DEGREES = [-60, -45, -30, -15, 0, 15, 30, 45, 60];
 
 function colorForMagnitude(absDeg: number, theme: ReturnType<typeof useTheme>) {
   if (absDeg >= 40) return theme.danger;
-  if (absDeg >= 22) return '#FFB020';
+  if (absDeg >= 22) return theme.warning;
   return theme.success;
 }
 

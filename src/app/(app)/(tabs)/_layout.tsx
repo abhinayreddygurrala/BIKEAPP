@@ -10,8 +10,9 @@ export default function TabsLayout() {
   return (
     <NativeTabs
       // Real native iOS blur material instead of a flat fill — Android has
-      // no blurEffect, so it keeps an opaque background there.
-      blurEffect="systemChromeMaterialDark"
+      // no blurEffect, so it keeps an opaque background there. The
+      // non-suffixed material adapts to light/dark on its own.
+      blurEffect="systemChromeMaterial"
       backgroundColor={Platform.OS === 'android' ? colors.background : undefined}
       shadowColor={colors.border}
       indicatorColor={colors.backgroundElement}

@@ -77,7 +77,7 @@ export default function EditServiceScreen() {
   if (loading) {
     return (
       <ThemedView style={styles.centered}>
-        <ActivityIndicator color="#fff" />
+        <ActivityIndicator color={theme.text} />
       </ThemedView>
     );
   }

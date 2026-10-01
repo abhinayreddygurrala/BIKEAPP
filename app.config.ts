@@ -10,7 +10,7 @@ const config: ExpoConfig = {
   orientation: "default",
   icon: "./assets/images/icon.png",
   scheme: "bikeapp",
-  userInterfaceStyle: "dark",
+  userInterfaceStyle: "automatic",
   ios: {
     bundleIdentifier: "com.abhinaygurrala.bikeapp",
     buildNumber: "1",

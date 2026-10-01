@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Dimensions, Modal, Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
+import { Dimensions, Modal, Pressable, StyleSheet, useWindowDimensions, View, type ViewStyle } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Extrapolation,
@@ -36,8 +37,14 @@ export type DragSheetProps = {
   contentStyle?: ViewStyle;
 };
 
+// How much of the screen a sheet may cover: the bottom part only, so the form
+// that opened it stays visible above it. Longer lists scroll inside the sheet.
+const MAX_SCREEN_FRACTION = 0.45;
+
 export function DragSheet({ visible, onClose, children, contentStyle }: DragSheetProps) {
   const theme = useTheme();
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
   const translateY = useSharedValue(SCREEN_HEIGHT);
   const context = useSharedValue(0);
@@ -115,7 +122,19 @@ export function DragSheet({ visible, onClose, children, contentStyle }: DragShee
       <View style={styles.wrap} pointerEvents="box-none">
         <GestureDetector gesture={pan}>
           <Animated.View style={sheetStyle}>
-            <ThemedView type="backgroundElement" style={[styles.sheetInner, contentStyle]}>
+            <ThemedView
+              type="backgroundElement"
+              style={[
+                styles.sheetInner,
+                // A fixed number, not a percentage: a percentage here resolves
+                // against this sheet's own content-sized wrapper, which made the
+                // sheet float mid-screen with an empty strip underneath it.
+                {
+                  maxHeight: Math.round(windowHeight * MAX_SCREEN_FRACTION),
+                  paddingBottom: Math.max(insets.bottom, Spacing.three) + Spacing.two,
+                },
+                contentStyle,
+              ]}>
               <View style={[styles.handle, { backgroundColor: theme.textSecondary }]} />
               {children}
             </ThemedView>
@@ -139,8 +158,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: Spacing.four,
     padding: Spacing.four,
     paddingTop: Spacing.two,
-    paddingBottom: Spacing.six,
-    maxHeight: '75%',
   },
   handle: {
     alignSelf: 'center',
