@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.env
+# Local SQLite database files (the real one lives on the Railway volume).
+data/

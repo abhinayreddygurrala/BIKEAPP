@@ -1,0 +1,29 @@
+{
+  "name": "odomap-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Odomap backend: accounts (unique username/email/phone) and, later, group chat. SQLite database, deployed on Railway.",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/rate-limit": "^11.2.0",
+    "fastify": "^5.12.5",
+    "libphonenumber-js": "^1.13.14",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  }
+}
