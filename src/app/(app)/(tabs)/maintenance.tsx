@@ -1,4 +1,4 @@
-import { Link, router, useFocusEffect } from 'expo-router';
+import { Link, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,15 +11,17 @@ import { Shadows, Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
 import {
   computeMaintenanceStats,
+  describeDue,
+  DUE_STATUS_LABELS,
   EXPENSE_CATEGORY_LABELS,
   formatCostPerDistance,
   formatFuelEconomy,
   formatVolume,
+  getCurrentOdometerKm,
   getDueItems,
   getSuggestedIntervals,
   MAINTENANCE_TYPE_LABELS,
   volumeUnitLabel,
-  type DueItem,
   type SuggestedInterval,
 } from '@/features/maintenance/maintenanceMath';
 import { distanceUnitLabel, formatDistance } from '@/features/ride-tracking/rideMath';
@@ -29,12 +31,6 @@ import { listExpenses, type Expense } from '@/services/expenseService';
 import { listFuelLogs, type FuelLog } from '@/services/fuelService';
 import { listMaintenanceRecords, type MaintenanceRecord } from '@/services/maintenanceService';
 import { syncDueNotifications } from '@/services/notificationService';
-
-const DUE_STATUS_LABEL: Record<DueItem['status'], string> = {
-  overdue: 'Overdue',
-  soon: 'Due Soon',
-  upcoming: 'Upcoming',
-};
 
 const TYPE_LABELS = MAINTENANCE_TYPE_LABELS;
 
@@ -63,25 +59,14 @@ function AddButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-function describeDue(item: DueItem, units: 'metric' | 'imperial'): string {
-  const parts: string[] = [];
-  if (item.odometerRemainingKm != null) {
-    const dist = formatDistance(Math.abs(item.odometerRemainingKm) * 1000, units);
-    const unit = distanceUnitLabel(units);
-    parts.push(item.odometerRemainingKm <= 0 ? `${dist} ${unit} overdue` : `${dist} ${unit} away`);
-  }
-  if (item.record.next_due_date) {
-    const dateLabel = new Date(item.record.next_due_date).toLocaleDateString();
-    parts.push(item.daysRemaining != null && item.daysRemaining <= 0 ? `was due ${dateLabel}` : `due ${dateLabel}`);
-  }
-  return parts.join(' · ');
-}
-
 export default function MaintenanceScreen() {
+  // Set when another screen (a bike's detail page) sends the user straight
+  // to one bike's maintenance instead of the "Which bike?" list.
+  const { bikeId: requestedBikeId } = useLocalSearchParams<{ bikeId?: string }>();
   const { units } = useSettings();
   const theme = useTheme();
   const [bikes, setBikes] = useState<Bike[]>([]);
-  const [selectedBikeId, setSelectedBikeId] = useState<string | null>(null);
+  const [selectedBikeId, setSelectedBikeId] = useState<string | null>(requestedBikeId ?? null);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [fuelLogs, setFuelLogs] = useState<FuelLog[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -113,17 +98,26 @@ export default function MaintenanceScreen() {
     }, [loadBikes, selectedBikeId])
   );
 
+  // Adjusted during render rather than in an effect (react.dev, "adjusting
+  // some state when a prop changes") — the tab stays mounted, so a later
+  // jump here arrives as a param change, not a fresh mount.
+  const [lastRequestedBikeId, setLastRequestedBikeId] = useState(requestedBikeId);
+  if (requestedBikeId !== lastRequestedBikeId) {
+    setLastRequestedBikeId(requestedBikeId);
+    if (requestedBikeId) setSelectedBikeId(requestedBikeId);
+  }
+  // Clear it once consumed, so a later jump here for the same bike still
+  // registers as a change after the user has tapped back to the list.
+  useEffect(() => {
+    if (requestedBikeId) router.setParams({ bikeId: undefined });
+  }, [requestedBikeId]);
+
   const selectedBike = bikes.find((b) => b.id === selectedBikeId) ?? null;
 
   const stats = computeMaintenanceStats(records, fuelLogs, expenses);
   const fuelEconomy = formatFuelEconomy(stats.fuelEconomyKmPerLiter, units);
   const costPerDistance = formatCostPerDistance(stats.costPerKm, units);
-  const knownOdometerReadings = [
-    selectedBike?.current_odometer_km ?? null,
-    ...records.map((r) => r.odometer_km),
-    ...fuelLogs.map((f) => f.odometer_km),
-  ].filter((v): v is number => v != null);
-  const currentOdometerKm = knownOdometerReadings.length ? Math.max(...knownOdometerReadings) : null;
+  const currentOdometerKm = getCurrentOdometerKm(selectedBike?.current_odometer_km ?? null, records, fuelLogs);
   const dueItems = getDueItems(records, currentOdometerKm);
   const suggestedIntervals = getSuggestedIntervals(records, currentOdometerKm);
 
@@ -241,7 +235,7 @@ export default function MaintenanceScreen() {
                                       ? theme.accent
                                       : theme.textSecondary,
                               }}>
-                              {DUE_STATUS_LABEL[item.status]}
+                              {DUE_STATUS_LABELS[item.status]}
                             </ThemedText>
                             <ThemedText type="default" themeColor="textSecondary">
                               ›

@@ -26,7 +26,9 @@ const MAKE_SECTIONS = [
 ];
 
 export default function EditBikeScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `focus=odometer` comes from the bike page's "Set odometer" row — open
+  // straight into that field instead of making them hunt for it.
+  const { id, focus } = useLocalSearchParams<{ id: string; focus?: 'odometer' }>();
   const { units } = useSettings();
   const theme = useTheme();
 
@@ -191,6 +193,7 @@ export default function EditBikeScreen() {
           placeholderTextColor={theme.textSecondary}
           keyboardType="numeric"
           inputAccessoryViewID={KEYBOARD_DONE_ACCESSORY_ID}
+          autoFocus={focus === 'odometer'}
           style={inputStyle}
         />
 

@@ -1,19 +1,37 @@
-import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View, type AlertButton } from 'react-native';
 import { Image } from 'expo-image';
 import type { ImagePickerOptions } from 'expo-image-picker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { StatCard } from '@/components/ui/StatCard';
-import { Spacing } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
-import { computeAggregateStats, distanceUnitLabel, formatDistance, formatDuration } from '@/features/ride-tracking/rideMath';
+import {
+  computeMaintenanceStats,
+  describeDue,
+  DUE_STATUS_LABELS,
+  getCurrentOdometerKm,
+  getDueItems,
+  MAINTENANCE_TYPE_LABELS,
+} from '@/features/maintenance/maintenanceMath';
+import {
+  computeAggregateStats,
+  distanceUnitLabel,
+  formatDistance,
+  formatLeanDeg,
+  formatSpeed,
+  formatTotalDuration,
+  speedUnitLabel,
+} from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteBike, getBike, removeBikePhoto, setBikePhoto, type Bike } from '@/services/bikesService';
-import { listRides } from '@/services/ridesService';
+import { listExpenses, type Expense } from '@/services/expenseService';
+import { listFuelLogs, type FuelLog } from '@/services/fuelService';
+import { listMaintenanceRecords, type MaintenanceRecord } from '@/services/maintenanceService';
+import { listRides, type RideSummary } from '@/services/ridesService';
 
 // Loaded via require() inside try/catch, not a static import — see
 // src/features/ride-tracking/useLeanAngleTracker.ts for why: native modules
@@ -43,12 +61,29 @@ const glassAvailable = !!GlassEffect?.isGlassEffectAPIAvailable();
 const HERO_HEIGHT = 320;
 const CARD_OVERLAP = 64;
 
+/** "today" / "yesterday" / "3 days ago" / "on Sep 12" — counted in calendar days, not 24h blocks. */
+function formatLastRidden(iso: string): string {
+  const then = new Date(iso);
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  // round, not floor — a DST change makes one calendar day 23 or 25 hours.
+  const days = Math.round((startOfDay(now) - startOfDay(then)) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  const sameYear = then.getFullYear() === now.getFullYear();
+  return `on ${then.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' })}`;
+}
+
 export default function BikeDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { units } = useSettings();
   const theme = useTheme();
   const [bike, setBike] = useState<Bike | null>(null);
-  const [stats, setStats] = useState(computeAggregateStats([]));
+  const [rides, setRides] = useState<RideSummary[]>([]);
+  const [records, setRecords] = useState<MaintenanceRecord[]>([]);
+  const [fuelLogs, setFuelLogs] = useState<FuelLog[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [localPhotoUri, setLocalPhotoUri] = useState<string | null>(null);
@@ -56,15 +91,24 @@ export default function BikeDetailScreen() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!id) return;
-    Promise.all([getBike(id), listRides()])
-      .then(([bikeResult, rides]) => {
-        setBike(bikeResult);
-        setStats(computeAggregateStats(rides.filter((r) => r.bike_id === id)));
-      })
-      .finally(() => setLoading(false));
-  }, [id]);
+  // Re-read on every focus, not just on mount — coming back from Edit
+  // (e.g. after setting the odometer) or from logging a service should show
+  // the new values without leaving and re-entering the page.
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return;
+      Promise.all([getBike(id), listRides(), listMaintenanceRecords(id), listFuelLogs(id), listExpenses(id)])
+        .then(([bikeResult, allRides, recordsResult, fuelResult, expensesResult]) => {
+          setBike(bikeResult);
+          setRides(allRides.filter((r) => r.bike_id === id));
+          setRecords(recordsResult);
+          setFuelLogs(fuelResult);
+          setExpenses(expensesResult);
+        })
+        .catch((e) => console.error('[BikeDetailScreen] failed to load', e))
+        .finally(() => setLoading(false));
+    }, [id])
+  );
 
   if (loading) {
     return (
@@ -84,14 +128,37 @@ export default function BikeDetailScreen() {
     );
   }
 
-  const onDelete = async () => {
-    setDeleting(true);
-    try {
-      await deleteBike(bike.id);
-      router.back();
-    } finally {
-      setDeleting(false);
-    }
+  // `name` is either a real nickname or, when the user skipped one, an
+  // auto-join of year/make/model computed once at creation time (see
+  // bikes/new.tsx). The hero card leads with the nickname and, when there is
+  // one, puts the full year/make/model under it — the nav bar already shows
+  // the nickname alone, so the card shouldn't just repeat it.
+  const derivedName = [bike.year, bike.make, bike.model].filter(Boolean).join(' ');
+  const hasNickname = bike.name.trim().length > 0 && bike.name.trim() !== derivedName.trim();
+  const title = hasNickname ? bike.name : derivedName || bike.name;
+
+  const onDelete = () => {
+    Alert.alert(
+      `Delete ${title}?`,
+      'Your rides on this bike stay in your ride history. This can’t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              await deleteBike(bike.id);
+              router.back();
+            } catch (e) {
+              console.error('[BikeDetailScreen] failed to delete', e);
+              setDeleting(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const displayPhotoUri = removed ? null : (localPhotoUri ?? bike.photo_url);
@@ -163,26 +230,66 @@ export default function BikeDetailScreen() {
     Alert.alert('Bike Photo', undefined, buttons);
   };
 
-  // `name` is either a real nickname or, when the user skipped one, an
-  // auto-join of year/make/model computed once at creation time (see
-  // bikes/new.tsx). Either way the hero card's only job is identity — the
-  // Details section below is the single source of truth for the facts, so
-  // there's nothing else to repeat here.
-  const derivedName = [bike.year, bike.make, bike.model].filter(Boolean).join(' ');
-  const hasNickname = bike.name.trim().length > 0 && bike.name.trim() !== derivedName.trim();
-  const title = hasNickname ? bike.name : derivedName || bike.name;
-
   const cardContent = (
-    <ThemedText type="subtitle" numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7}>
-      🏍️ {title}
-    </ThemedText>
+    <>
+      <ThemedText
+        type="subtitle"
+        numberOfLines={2}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+        style={styles.nameCardTitle}>
+        🏍️ {title}
+      </ThemedText>
+      {hasNickname && derivedName ? (
+        <ThemedText type="default" numberOfLines={1} style={styles.nameCardSubtitle}>
+          {derivedName}
+        </ThemedText>
+      ) : null}
+    </>
   );
 
   const hasVin = !!bike.vin?.trim();
-  const odometerText =
-    bike.current_odometer_km != null
-      ? `${formatDistance(bike.current_odometer_km * 1000, units)} ${distanceUnitLabel(units)}`
-      : '—';
+  const hasOdometer = bike.current_odometer_km != null;
+  const odometerText = hasOdometer
+    ? `${formatDistance((bike.current_odometer_km as number) * 1000, units)} ${distanceUnitLabel(units)}`
+    : 'Set odometer';
+  const onEditOdometer = () =>
+    router.push({
+      pathname: '/(app)/bikes/edit',
+      params: { id: bike.id, focus: 'odometer' },
+    });
+
+  const stats = computeAggregateStats(rides);
+  const topSpeedKmh = rides.reduce((max, r) => Math.max(max, r.max_speed_kmh ?? 0), 0);
+  const maxLeanDeg = rides.reduce((max, r) => Math.max(max, Math.abs(r.lean_max_deg ?? 0)), 0);
+  const lastRiddenAt = rides.length
+    ? new Date(Math.max(...rides.map((r) => new Date(r.started_at).getTime()))).toISOString()
+    : null;
+
+  // Same "current odometer" and "next due" logic the Maintenance tab uses,
+  // so the two never disagree about what's coming up.
+  const currentOdometerKm = getCurrentOdometerKm(bike.current_odometer_km, records, fuelLogs);
+  const nextDue = getDueItems(records, currentOdometerKm)[0] ?? null;
+  const { totalSpent } = computeMaintenanceStats(records, fuelLogs, expenses);
+  const nextDueColor = nextDue
+    ? nextDue.status === 'overdue'
+      ? theme.danger
+      : nextDue.status === 'soon'
+        ? theme.accent
+        : theme.textSecondary
+    : theme.textSecondary;
+  const nextDueDetail = nextDue
+    ? [DUE_STATUS_LABELS[nextDue.status], describeDue(nextDue, units)].filter(Boolean).join(' · ')
+    : null;
+
+  // dismissTo, not push — this pops back to the tab bar and switches it to
+  // Maintenance (with this bike already open), rather than stacking a second
+  // copy of the tabs on top of this page.
+  const onOpenMaintenance = () =>
+    router.dismissTo({
+      pathname: '/(app)/(tabs)/maintenance',
+      params: { bikeId: bike.id },
+    });
 
   return (
     <ThemedView style={styles.flex}>
@@ -200,19 +307,31 @@ export default function BikeDetailScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Pressable onPress={onEditPhoto} disabled={photoBusy} style={styles.heroWrap}>
+        <Pressable
+          onPress={onEditPhoto}
+          disabled={photoBusy}
+          accessibilityRole="button"
+          accessibilityLabel={displayPhotoUri ? 'Change bike photo' : 'Add bike photo'}
+          style={styles.heroWrap}>
           {displayPhotoUri ? (
             <Image source={{ uri: displayPhotoUri }} contentFit="cover" transition={200} style={styles.hero} />
           ) : (
             <View style={[styles.hero, styles.heroPlaceholder, { backgroundColor: theme.backgroundElement }]}>
               <ThemedText style={styles.heroPlaceholderEmoji}>🏍️</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Tap to add a photo
+              </ThemedText>
             </View>
           )}
           {photoBusy ? (
             <View style={[styles.hero, styles.heroOverlay]}>
               <ActivityIndicator color="#fff" />
             </View>
-          ) : null}
+          ) : (
+            <View style={styles.cameraBadge} pointerEvents="none">
+              <ThemedText style={styles.cameraBadgeIcon}>📷</ThemedText>
+            </View>
+          )}
         </Pressable>
 
         {glassAvailable && GlassEffect ? (
@@ -237,24 +356,122 @@ export default function BikeDetailScreen() {
             <DetailRow label="Make" value={bike.make ?? '—'} />
             <DetailRow label="Model" value={bike.model ?? '—'} />
             <DetailRow label="Year" value={bike.year ? String(bike.year) : '—'} />
-            <DetailRow label="Odometer" value={odometerText} isLast={!hasVin} />
+            <DetailRow
+              label="Odometer"
+              value={odometerText}
+              accent={!hasOdometer}
+              onPress={onEditOdometer}
+              isLast={!hasVin}
+            />
             {hasVin ? <DetailRow label="VIN" value={bike.vin as string} mono isLast /> : null}
           </ThemedView>
 
-          <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
-            Activity
-          </ThemedText>
-          <View style={styles.statsRow}>
-            <StatCard label="Rides" value={String(stats.rideCount)} />
-            <StatCard
-              label="Total Distance"
-              value={formatDistance(stats.totalDistanceMeters, units)}
-              unit={distanceUnitLabel(units)}
-            />
+          <View style={[styles.sectionHeader, styles.sectionLabel]}>
+            <ThemedText type="statLabel" themeColor="textSecondary">
+              Activity
+            </ThemedText>
+            {lastRiddenAt ? (
+              <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                Last ride {formatLastRidden(lastRiddenAt)}
+              </ThemedText>
+            ) : null}
           </View>
-          <StatCard label="Total Time" value={formatDuration(stats.totalDurationSeconds)} />
+          {stats.rideCount > 0 ? (
+            <>
+              <View style={styles.statsRow}>
+                <StatCard label="Rides" value={String(stats.rideCount)} />
+                <StatCard
+                  label="Total Distance"
+                  value={formatDistance(stats.totalDistanceMeters, units)}
+                  unit={distanceUnitLabel(units)}
+                />
+              </View>
+              <View style={styles.statsRow}>
+                <StatCard label="Total Time" value={formatTotalDuration(stats.totalDurationSeconds)} />
+                <StatCard
+                  label="Longest Ride"
+                  value={formatDistance(stats.longestRideMeters, units)}
+                  unit={distanceUnitLabel(units)}
+                />
+              </View>
+              <View style={styles.statsRow}>
+                <StatCard
+                  label="Top Speed"
+                  value={topSpeedKmh > 0 ? formatSpeed(topSpeedKmh, units) : '—'}
+                  unit={topSpeedKmh > 0 ? speedUnitLabel(units) : undefined}
+                />
+                <StatCard label="Max Lean" value={maxLeanDeg > 0 ? `${formatLeanDeg(maxLeanDeg)}°` : '—'} />
+              </View>
+            </>
+          ) : (
+            <ThemedView type="backgroundElement" style={styles.emptyCard}>
+              <ThemedText type="default" themeColor="textSecondary">
+                No rides on this bike yet.
+              </ThemedText>
+            </ThemedView>
+          )}
 
-          <PrimaryButton label="Delete Bike" variant="danger" onPress={onDelete} loading={deleting} style={styles.deleteButton} />
+          <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
+            Maintenance
+          </ThemedText>
+          <ThemedView type="backgroundElement" style={styles.detailsCard}>
+            <View
+              style={[
+                styles.detailRow,
+                {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: theme.border,
+                },
+              ]}>
+              <ThemedText type="default" themeColor="textSecondary">
+                Next Service
+              </ThemedText>
+              {nextDue ? (
+                <View style={styles.nextDueValue}>
+                  <ThemedText type="default" numberOfLines={1}>
+                    {MAINTENANCE_TYPE_LABELS[nextDue.record.type]}
+                  </ThemedText>
+                  <ThemedText type="small" numberOfLines={1} style={{ color: nextDueColor }}>
+                    {nextDueDetail}
+                  </ThemedText>
+                </View>
+              ) : (
+                <ThemedText type="default" themeColor="textSecondary" style={styles.detailValue}>
+                  Nothing scheduled
+                </ThemedText>
+              )}
+            </View>
+            <DetailRow label="Total Spent" value={`$${totalSpent.toFixed(2)}`} />
+            <Pressable
+              onPress={onOpenMaintenance}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.detailRow, pressed && styles.pressed]}>
+              <ThemedText type="default" themeColor="accent">
+                Open Maintenance
+              </ThemedText>
+              <ThemedText type="default" themeColor="accent">
+                ›
+              </ThemedText>
+            </Pressable>
+          </ThemedView>
+
+          <Pressable
+            onPress={onDelete}
+            disabled={deleting}
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.deleteRow,
+              { backgroundColor: theme.backgroundElement },
+              pressed && styles.pressed,
+            ]}>
+            {deleting ? (
+              <ActivityIndicator color={theme.danger} />
+            ) : (
+              <ThemedText type="default" themeColor="danger">
+                Delete Bike
+              </ThemedText>
+            )}
+          </Pressable>
         </View>
       </ScrollView>
     </ThemedView>
@@ -265,27 +482,57 @@ function DetailRow({
   label,
   value,
   mono,
+  accent,
+  onPress,
   isLast,
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  /** Value in the accent color — for a "Set …" call to action in place of a missing value. */
+  accent?: boolean;
+  /** Makes the whole row tappable and adds a chevron. */
+  onPress?: () => void;
   isLast?: boolean;
 }) {
   const theme = useTheme();
-  return (
-    <View
-      style={[
-        styles.detailRow,
-        !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border },
-      ]}>
+  const rowStyle = [
+    styles.detailRow,
+    !isLast && {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.border,
+    },
+  ];
+  const content = (
+    <>
       <ThemedText type="default" themeColor="textSecondary">
         {label}
       </ThemedText>
-      <ThemedText type={mono ? 'code' : 'default'} numberOfLines={1} style={styles.detailValue}>
-        {value}
-      </ThemedText>
-    </View>
+      <View style={styles.detailValueRow}>
+        <ThemedText
+          type={mono ? 'code' : 'default'}
+          themeColor={accent ? 'accent' : 'text'}
+          numberOfLines={1}
+          style={styles.detailValue}>
+          {value}
+        </ThemedText>
+        {onPress ? (
+          <ThemedText type="default" themeColor="textSecondary">
+            ›
+          </ThemedText>
+        ) : null}
+      </View>
+    </>
+  );
+
+  if (!onPress) return <View style={rowStyle}>{content}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => [rowStyle, pressed && styles.pressed]}>
+      {content}
+    </Pressable>
   );
 }
 
@@ -309,9 +556,11 @@ const styles = StyleSheet.create({
   heroPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+    gap: Spacing.one,
   },
   heroPlaceholderEmoji: {
     fontSize: 64,
+    lineHeight: 76,
   },
   heroOverlay: {
     position: 'absolute',
@@ -319,6 +568,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  cameraBadge: {
+    position: 'absolute',
+    top: Spacing.three,
+    right: Spacing.three,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  cameraBadgeIcon: {
+    fontSize: 16,
+    lineHeight: 20,
   },
   nameCard: {
     marginTop: -CARD_OVERLAP,
@@ -331,6 +595,15 @@ const styles = StyleSheet.create({
   nameCardFallback: {
     backgroundColor: 'rgba(12,12,14,0.82)',
   },
+  // The card is always dark (dark glass, or the dark fallback fill) whatever
+  // the app theme is, so its text is pinned to the dark palette — the themed
+  // light-mode text color would be near-black on a near-black card.
+  nameCardTitle: {
+    color: Colors.dark.text,
+  },
+  nameCardSubtitle: {
+    color: Colors.dark.textSecondary,
+  },
   body: {
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.four,
@@ -338,6 +611,12 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     marginTop: Spacing.two,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   detailsCard: {
     borderRadius: Spacing.three,
@@ -350,15 +629,37 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     paddingVertical: Spacing.three,
   },
+  detailValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    flexShrink: 1,
+  },
   detailValue: {
     flexShrink: 1,
     textAlign: 'right',
+  },
+  nextDueValue: {
+    flexShrink: 1,
+    alignItems: 'flex-end',
+    gap: 2,
   },
   statsRow: {
     flexDirection: 'row',
     gap: Spacing.two,
   },
-  deleteButton: {
-    marginTop: Spacing.three,
+  emptyCard: {
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+  },
+  deleteRow: {
+    marginTop: Spacing.four,
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressed: {
+    opacity: 0.6,
   },
 });

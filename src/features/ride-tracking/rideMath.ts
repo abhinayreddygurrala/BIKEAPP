@@ -422,6 +422,17 @@ export function formatDuration(durationSeconds: number | null) {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/** For totals summed across many rides — "2h 15m" / "30m 12s", since a clock-style "30:12" doesn't say whether that's hours or minutes. */
+export function formatTotalDuration(durationSeconds: number | null) {
+  const totalSeconds = Math.floor(durationSeconds ?? 0);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export function formatSpeed(speedKmh: number | null, units: Units) {
   if (!speedKmh) return '0';
   return (units === 'imperial' ? speedKmh * KM_TO_MI : speedKmh).toFixed(0);

@@ -1,6 +1,6 @@
 import type { JSONSchema } from 'expo-foundation-models';
 
-import type { Units } from '@/features/ride-tracking/rideMath';
+import { distanceUnitLabel, formatDistance, type Units } from '@/features/ride-tracking/rideMath';
 import type { Expense } from '@/services/expenseService';
 import type { FuelLog } from '@/services/fuelService';
 import type { MaintenanceRecord } from '@/services/maintenanceService';
@@ -267,6 +267,43 @@ export type DueItem = {
   odometerRemainingKm: number | null;
   daysRemaining: number | null;
 };
+
+export const DUE_STATUS_LABELS: Record<DueStatus, string> = {
+  overdue: 'Overdue',
+  soon: 'Due Soon',
+  upcoming: 'Upcoming',
+};
+
+/** "300 mi away · due 11/2/2026" — the one-line "how close is it" for a due item. */
+export function describeDue(item: DueItem, units: Units): string {
+  const parts: string[] = [];
+  if (item.odometerRemainingKm != null) {
+    const dist = formatDistance(Math.abs(item.odometerRemainingKm) * 1000, units);
+    const unit = distanceUnitLabel(units);
+    parts.push(item.odometerRemainingKm <= 0 ? `${dist} ${unit} overdue` : `${dist} ${unit} away`);
+  }
+  if (item.record.next_due_date) {
+    const dateLabel = new Date(item.record.next_due_date).toLocaleDateString();
+    parts.push(item.daysRemaining != null && item.daysRemaining <= 0 ? `was due ${dateLabel}` : `due ${dateLabel}`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Best guess at the bike's odometer right now: the highest reading anywhere —
+ * the bike's own field, or any service/fuel log — since whichever was logged
+ * most recently is also the largest.
+ */
+export function getCurrentOdometerKm(
+  bikeOdometerKm: number | null,
+  records: MaintenanceRecord[],
+  fuelLogs: FuelLog[]
+): number | null {
+  const readings = [bikeOdometerKm, ...records.map((r) => r.odometer_km), ...fuelLogs.map((f) => f.odometer_km)].filter(
+    (v): v is number => v != null
+  );
+  return readings.length ? Math.max(...readings) : null;
+}
 
 const DUE_SOON_KM = 500;
 const DUE_SOON_DAYS = 30;
