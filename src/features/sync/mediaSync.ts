@@ -59,6 +59,11 @@ export async function pushMedia(request: AuthedRequest): Promise<MediaResult> {
         method: 'POST',
         body: { path, size: file.size },
       });
+      // The server has now listed this file for the account. Note it here
+      // (empty signature = not confirmed, so it's uploaded again next time)
+      // before uploading, so if the upload's reply is lost and the photo is
+      // then deleted, the delete still reaches the backup.
+      await db.runAsync("INSERT OR IGNORE INTO media_state (path, signature) VALUES (?, '')", [path]);
       const result = await file.upload(url, { httpMethod: 'PUT', headers, uploadType: UploadType.BINARY_CONTENT });
       if (result.status < 200 || result.status >= 300) throw new Error(`Photo upload failed (${result.status})`);
       await db.runAsync('INSERT OR REPLACE INTO media_state (path, signature) VALUES (?, ?)', [path, signature]);

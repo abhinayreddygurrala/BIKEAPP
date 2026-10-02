@@ -140,7 +140,7 @@ export default function BikeDetailScreen() {
   const onDelete = () => {
     Alert.alert(
       `Delete ${title}?`,
-      'Your rides on this bike stay in your ride history. This can’t be undone.',
+      'Its service records, expenses and fuel logs are deleted too, from this phone and your cloud backup. Your rides on it stay in your ride history. This can’t be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {

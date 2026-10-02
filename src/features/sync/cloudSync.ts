@@ -71,6 +71,21 @@ async function loadState(db: SQLiteDatabase) {
   return new Map(rows.map((r) => [`${r.kind}:${r.record_id}`, r.hash]));
 }
 
+/**
+ * Notes records as "sent, not confirmed" (empty hash) before they go up, so a
+ * push that reaches the server but loses its reply still leaves a trace here:
+ * if the record is deleted before the next save, the delete is sent instead
+ * of the cloud copy being forgotten about. An empty hash never matches, so an
+ * unconfirmed record is simply sent again next time.
+ */
+async function markPending(db: SQLiteDatabase, refs: RecordRef[]) {
+  await db.withTransactionAsync(async () => {
+    for (const r of refs) {
+      await db.runAsync("INSERT OR IGNORE INTO sync_state (kind, record_id, hash) VALUES (?, ?, '')", [r.kind, r.id]);
+    }
+  });
+}
+
 async function saveState(db: SQLiteDatabase, upserts: (RecordRef & { hash: string })[], deletes: RecordRef[]) {
   await db.withTransactionAsync(async () => {
     for (const u of upserts) {
@@ -139,6 +154,7 @@ export async function pushChanges(request: AuthedRequest): Promise<{ sent: numbe
     const batch = changed.slice(i, i + BATCH_SIZE);
     const batchDeletes = i === 0 ? deletes : [];
     if (batch.length === 0 && batchDeletes.length === 0) break;
+    await markPending(db, batch);
     await request('/sync/push', {
       method: 'POST',
       body: { upserts: batch.map(({ kind, id, data }) => ({ kind, id, data })), deletes: batchDeletes },
@@ -152,6 +168,7 @@ export async function pushChanges(request: AuthedRequest): Promise<{ sent: numbe
       `SELECT ${POINT_COLUMNS.join(', ')} FROM ride_points_local WHERE ride_id = ? ORDER BY seq`,
       [ride.id]
     );
+    await markPending(db, [ride]);
     await request('/sync/push', { method: 'POST', body: { upserts: [{ kind: 'ride_points', id: ride.id, data: { points } }], deletes: [] } });
     await saveState(db, [ride], []);
   }

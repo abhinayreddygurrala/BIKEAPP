@@ -15,6 +15,7 @@ export function openDatabase(file: string): Db {
     PRAGMA journal_mode = WAL;     -- readers don't block the writer
     PRAGMA foreign_keys = ON;      -- enforce ON DELETE CASCADE
     PRAGMA busy_timeout = 5000;    -- wait briefly instead of failing on a lock
+    PRAGMA secure_delete = ON;     -- overwrite deleted rows, so they don't linger in the file
   `);
   return db;
 }

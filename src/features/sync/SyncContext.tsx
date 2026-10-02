@@ -5,6 +5,7 @@ import { Alert, AppState } from 'react-native';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useSettings } from '@/features/settings/SettingsContext';
 import { isApiConfigured } from '@/lib/apiClient';
+import { deleteOrphanedBikeData } from '@/services/bikesService';
 
 import { clearAccountDataFromPhone } from './clearPhone';
 import {
@@ -97,6 +98,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     if (!enabled || paused.current) return;
     exclusive(async () => {
       setSyncState('saving');
+      // Leftovers from bikes deleted before a bike's delete took its records
+      // with it — removing them here means they leave the backup in this same
+      // save. Can't overlap a restore: both run one at a time via exclusive().
+      await deleteOrphanedBikeData();
       // Records first (small and quick), then photos.
       await pushChanges(authedRequest);
       setLastSyncedAt(await getLastSyncedAt());
