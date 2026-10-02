@@ -50,8 +50,10 @@ function RootNavigator() {
   // the switch happens automatically when either changes.
   const showWelcome = status === 'signedOut' && !hasSkippedSignIn;
 
+  // The launch intro takes over from the native splash screen (and hides
+  // it), then reveals the first screen once it's ready.
   return (
-    <>
+    <LaunchIntro ready={ready}>
       {ready ? (
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Protected guard={showWelcome}>
@@ -62,10 +64,7 @@ function RootNavigator() {
           </Stack.Protected>
         </Stack>
       ) : null}
-      {/* Takes over from the native splash screen (and hides it), then
-          reveals the first screen once it's ready. */}
-      <LaunchIntro ready={ready} />
-    </>
+    </LaunchIntro>
   );
 }
 

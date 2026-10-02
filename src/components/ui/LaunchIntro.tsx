@@ -1,6 +1,6 @@
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
-import { Image, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Image, StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   Extrapolation,
@@ -9,8 +9,8 @@ import Animated, {
   useReducedMotion,
   useSharedValue,
   withDelay,
+  withSequence,
   withTiming,
-  type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -21,50 +21,50 @@ const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
 // backgroundColor and imageWidth) so the hand-off from it is invisible.
 const SPLASH_BACKGROUND = '#0B0B0D';
 const SPLASH_ICON = require('@/assets/images/splash-icon.png');
-const LOGO_SIZE = 76;
+const SPLASH_LOGO_WIDTH = 76;
 
-// The logo is drawn aspect-fit in a 76pt square, like the native splash.
-// Its rear tyre meets the ground at about (18%, 89%) of that square, which is
-// where the wheelie pivots.
-const REAR_WHEEL_CONTACT = '18% 89%';
-const WHEELIE_DEG = 15;
-
-// Shift lights under the bike, amber to orange like the app icon's gradient.
-const LIGHT_COUNT = 9;
-const LIGHT_COLORS = Array.from({ length: LIGHT_COUNT }, (_, i) => mix('#FFB020', '#FF4B1F', i / (LIGHT_COUNT - 1)));
-// Just under the bike's wheels (which end at 67pt down the 76pt square).
-const LIGHTS_TOP = 82;
-
-function mix(from: string, to: string, t: number) {
-  const channel = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
-  const [r, g, b] = [0, 1, 2].map((i) => Math.round(channel(from, i) + (channel(to, i) - channel(from, i)) * t));
-  return `rgb(${r}, ${g}, ${b})`;
-}
+// The logo grows from the splash's size to this one. It's drawn at this size
+// (and starts scaled down) so it's sharp once it settles. The image is 754×584.
+const LOGO_WIDTH = 112;
+const LOGO_HEIGHT = (LOGO_WIDTH * 584) / 754;
+const START_SCALE = SPLASH_LOGO_WIDTH / LOGO_WIDTH;
+// How far the logo rises to make room for the name, keeping the pair centered.
+const LIFT = 23;
+const NAME_GAP = 22;
+const NAME_TRACKING = 7;
+const GLOW_SIZE = 72;
+// The reveal zooms through the rear wheel's hub.
+const REAR_HUB = '18.2% 76.3%';
+const ZOOM = 18;
+// A beat to read the name before the reveal.
+const HOLD_MS = 120;
 
 type LaunchIntroProps = {
-  /** True once the first screen has rendered underneath, so the intro can get out of the way. */
+  /** True once the first screen has rendered underneath. */
   ready: boolean;
+  /** The app. It sits under the intro and settles into place as it's revealed. */
+  children: ReactNode;
 };
 
 /**
- * Plays once per cold launch, taking over from the native splash screen: the
- * shift lights under the logo sweep up like a dash at ignition, then the bike
- * pops a wheelie and rides off while the app fades in underneath. It runs
- * while the app is still loading, so it adds well under a second; with Reduce
- * Motion on, it's a plain crossfade.
+ * Plays once per cold launch, taking over from the native splash screen with
+ * an identical-looking one: the logo grows with a soft glow and the name fades
+ * in under it, then the logo zooms toward the viewer as the app settles into
+ * place underneath. It runs while the app is still loading; with Reduce Motion
+ * on, it's a plain crossfade.
  */
-export function LaunchIntro({ ready }: LaunchIntroProps) {
+export function LaunchIntro({ ready, children }: LaunchIntroProps) {
   const reduced = useReducedMotion();
-  const { width } = useWindowDimensions();
   const [logoShown, setLogoShown] = useState(false);
-  const [revved, setRevved] = useState(false);
+  const [branded, setBranded] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [finished, setFinished] = useState(false);
 
-  const rev = useSharedValue(0);
-  const lift = useSharedValue(0);
-  const go = useSharedValue(0);
-  const veil = useSharedValue(1);
+  const grow = useSharedValue(0);
+  const name = useSharedValue(0);
+  const zoom = useSharedValue(1);
+  const backdrop = useSharedValue(1);
+  const appScale = useSharedValue(1);
 
   // If the logo never reports loading, don't leave the native splash up.
   useEffect(() => {
@@ -72,107 +72,130 @@ export function LaunchIntro({ ready }: LaunchIntroProps) {
     return () => clearTimeout(timer);
   }, []);
 
-  // Swap the native splash for this identical-looking screen, then rev.
+  // Swap the native splash for this one, then play the brand moment.
   useEffect(() => {
     if (!logoShown) return;
     // One frame so this logo is on screen before the native one goes.
     const frame = requestAnimationFrame(() => {
       SplashScreen.hide();
       if (reduced) {
-        setRevved(true);
+        setBranded(true);
         return;
       }
-      rev.set(
-        withTiming(1, { duration: 340, easing: Easing.linear }, (done) => {
-          if (done) scheduleOnRN(setRevved, true);
-        })
+      grow.set(withTiming(1, { duration: 420, easing: EASE_OUT }));
+      name.set(
+        withDelay(
+          80,
+          withTiming(1, { duration: 340, easing: EASE_OUT }, (done) => {
+            if (done) scheduleOnRN(setBranded, true);
+          })
+        )
       );
     });
     return () => cancelAnimationFrame(frame);
-  }, [logoShown, reduced, rev]);
+  }, [logoShown, reduced, grow, name]);
 
-  // Launch once the lights are full and the app is ready underneath.
+  // Reveal once the brand moment has played and the app is ready underneath.
   useEffect(() => {
-    if (!revved || !ready) return;
+    if (!branded || !ready) return;
     // Two frames so the first screen has painted before it's revealed.
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         setLeaving(true);
         if (reduced) {
-          veil.set(
+          backdrop.set(
             withTiming(0, { duration: 250, easing: EASE_OUT }, (done) => {
               if (done) scheduleOnRN(setFinished, true);
             })
           );
           return;
         }
-        lift.set(withDelay(60, withTiming(1, { duration: 160, easing: EASE_OUT })));
-        go.set(withDelay(100, withTiming(1, { duration: 360, easing: EASE_IN_OUT })));
-        veil.set(
+        name.set(withDelay(HOLD_MS, withTiming(0, { duration: 160, easing: EASE_OUT })));
+        // A small dip first, then the zoom, so it reads as a launch.
+        zoom.set(
           withDelay(
-            200,
-            withTiming(0, { duration: 300, easing: EASE_OUT }, (done) => {
-              if (done) scheduleOnRN(setFinished, true);
-            })
+            HOLD_MS,
+            withSequence(
+              withTiming(0.9, { duration: 120, easing: EASE_IN_OUT }),
+              withTiming(ZOOM, { duration: 420, easing: EASE_IN_OUT })
+            )
+          )
+        );
+        backdrop.set(withDelay(HOLD_MS + 160, withTiming(0, { duration: 360, easing: EASE_OUT })));
+        // The app starts a little enlarged (still hidden) and settles as it appears.
+        appScale.set(
+          withSequence(
+            withTiming(1.06, { duration: 0 }),
+            withDelay(
+              HOLD_MS + 140,
+              withTiming(1, { duration: 480, easing: EASE_OUT }, (done) => {
+                if (done) scheduleOnRN(setFinished, true);
+              })
+            )
           )
         );
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [revved, ready, reduced, lift, go, veil]);
+  }, [branded, ready, reduced, name, zoom, backdrop, appScale]);
 
-  // Far enough right to leave the screen from the middle.
-  const travel = width / 2 + LOGO_SIZE;
-
-  const backdropStyle = useAnimatedStyle(() => ({ opacity: veil.get() }));
-  const bikeStyle = useAnimatedStyle(() => ({
-    opacity: reduced ? veil.get() : interpolate(go.get(), [0.5, 1], [1, 0], Extrapolation.CLAMP),
-    transform: [{ translateX: go.get() * travel }, { rotate: `${-lift.get() * WHEELIE_DEG}deg` }],
+  const appStyle = useAnimatedStyle(() => ({ transform: [{ scale: appScale.get() }] }));
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: backdrop.get() }));
+  // With Reduce Motion, the logo simply fades out with the background.
+  const contentStyle = useAnimatedStyle(() => ({ opacity: reduced ? backdrop.get() : 1 }));
+  const brandStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -LIFT * grow.get() }, { scale: START_SCALE + (1 - START_SCALE) * grow.get() }],
   }));
-  // The lights go dark as the front wheel comes up.
-  const lightsStyle = useAnimatedStyle(() => ({ opacity: 1 - lift.get() }));
-
-  if (finished) return null;
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: grow.get() * interpolate(zoom.get(), [1.5, 4], [1, 0], Extrapolation.CLAMP),
+    transform: [{ scale: 0.7 + 0.3 * grow.get() }],
+  }));
+  const zoomStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(zoom.get(), [2.5, 9], [1, 0], Extrapolation.CLAMP),
+    transform: [{ scale: zoom.get() }],
+  }));
+  const nameStyle = useAnimatedStyle(() => ({
+    opacity: name.get(),
+    transform: [{ translateY: 10 * (1 - grow.get()) }],
+  }));
 
   return (
-    <View
-      style={StyleSheet.absoluteFill}
-      pointerEvents={leaving ? 'none' : 'auto'}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants">
-      <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]} />
-      <View style={[StyleSheet.absoluteFill, styles.center]}>
-        <View style={styles.stage}>
-          <Animated.View style={[styles.bike, bikeStyle]}>
-            <Image
-              source={SPLASH_ICON}
-              style={styles.logo}
-              resizeMode="contain"
-              onLoad={() => setLogoShown(true)}
-              onError={() => setLogoShown(true)}
-            />
-          </Animated.View>
-          <Animated.View style={[styles.lights, lightsStyle]}>
-            {LIGHT_COLORS.map((color, index) => (
-              <ShiftLight key={color} index={index} color={color} rev={rev} />
-            ))}
+    <>
+      <Animated.View style={[styles.app, appStyle]}>{children}</Animated.View>
+      {finished ? null : (
+        <View
+          style={StyleSheet.absoluteFill}
+          pointerEvents={leaving ? 'none' : 'auto'}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants">
+          <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]} />
+          <Animated.View style={[StyleSheet.absoluteFill, styles.center, contentStyle]}>
+            <Animated.View style={[styles.logo, brandStyle]}>
+              <Animated.View style={[styles.glow, glowStyle]} />
+              <Animated.View style={[styles.logo, styles.zoomOrigin, zoomStyle]}>
+                <Image
+                  source={SPLASH_ICON}
+                  style={styles.logo}
+                  resizeMode="contain"
+                  onLoad={() => setLogoShown(true)}
+                  onError={() => setLogoShown(true)}
+                />
+              </Animated.View>
+            </Animated.View>
+            <Animated.Text style={[styles.name, nameStyle]} allowFontScaling={false}>
+              ODOMAP
+            </Animated.Text>
           </Animated.View>
         </View>
-      </View>
-    </View>
+      )}
+    </>
   );
 }
 
-function ShiftLight({ index, color, rev }: { index: number; color: string; rev: SharedValue<number> }) {
-  const start = index / LIGHT_COUNT;
-  const style = useAnimatedStyle(() => ({
-    opacity: interpolate(rev.get(), [start, start + 1 / LIGHT_COUNT], [0, 1], Extrapolation.CLAMP),
-  }));
-
-  return <Animated.View style={[styles.light, { backgroundColor: color, shadowColor: color }, style]} />;
-}
-
 const styles = StyleSheet.create({
+  app: {
+    flex: 1,
+  },
   backdrop: {
     backgroundColor: SPLASH_BACKGROUND,
   },
@@ -180,34 +203,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stage: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
-  },
-  bike: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
-    transformOrigin: REAR_WHEEL_CONTACT,
-  },
   logo: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
+    width: LOGO_WIDTH,
+    height: LOGO_HEIGHT,
   },
-  lights: {
+  zoomOrigin: {
+    transformOrigin: REAR_HUB,
+  },
+  glow: {
     position: 'absolute',
-    top: LIGHTS_TOP,
+    left: (LOGO_WIDTH - GLOW_SIZE) / 2,
+    top: (LOGO_HEIGHT - GLOW_SIZE) / 2,
+    width: GLOW_SIZE,
+    height: GLOW_SIZE,
+    borderRadius: GLOW_SIZE / 2,
+    // The app icon's orange, as a soft light behind the logo.
+    backgroundColor: 'rgba(255, 75, 31, 0.22)',
+    boxShadow: '0 0 60px 36px rgba(255, 75, 31, 0.22)',
+  },
+  name: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: LOGO_HEIGHT / 2 - LIFT + NAME_GAP,
     left: 0,
     right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  light: {
-    width: 6,
-    height: 4,
-    borderRadius: 2,
-    // A soft glow in each light's own color, like a lit LED.
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 4,
+    textAlign: 'center',
+    // Letter spacing also trails the last letter; this keeps the word centered.
+    paddingLeft: NAME_TRACKING,
+    letterSpacing: NAME_TRACKING,
+    color: '#F5F5F7',
+    fontSize: 17,
+    fontWeight: '700',
   },
 });
