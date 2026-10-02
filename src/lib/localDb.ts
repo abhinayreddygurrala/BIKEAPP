@@ -63,6 +63,16 @@ export function getDb() {
         CREATE INDEX IF NOT EXISTS expenses_local_bike_idx
           ON expenses_local (bike_id);
 
+        CREATE TABLE IF NOT EXISTS expense_attachments_local (
+          id TEXT PRIMARY KEY,
+          expense_id TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS expense_attachments_local_expense_idx
+          ON expense_attachments_local (expense_id);
+
         CREATE TABLE IF NOT EXISTS fuel_logs_local (
           id TEXT PRIMARY KEY,
           bike_id TEXT NOT NULL,
@@ -180,6 +190,18 @@ export function getDb() {
       for (const column of newSettingsColumns) {
         try {
           await db.execAsync(`ALTER TABLE settings_local ADD COLUMN ${column};`);
+        } catch {
+          // Column already exists from a previous run — fine.
+        }
+      }
+
+      // Category-specific expense fields (policy/registration number, who
+      // issued it, and a coverage/validity period) added after expenses_local
+      // already existed on-device.
+      const newExpenseColumns = ['reference_number TEXT', 'provider TEXT', 'period_start TEXT', 'period_end TEXT'];
+      for (const column of newExpenseColumns) {
+        try {
+          await db.execAsync(`ALTER TABLE expenses_local ADD COLUMN ${column};`);
         } catch {
           // Column already exists from a previous run — fine.
         }

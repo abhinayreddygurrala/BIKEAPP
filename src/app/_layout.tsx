@@ -4,8 +4,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, type ReactNode } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { AuthProvider } from '@/features/auth/AuthContext';
+import { AuthProvider, useAuth } from '@/features/auth/AuthContext';
 import { SettingsProvider, useSettings } from '@/features/settings/SettingsContext';
+import { SyncProvider } from '@/features/sync/SyncContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 // Side-effect import: registers the background location task at app
@@ -41,16 +42,27 @@ function AppThemeProvider({ children }: { children: ReactNode }) {
 
 function RootNavigator() {
   const { isLoading } = useSettings();
+  const { status, hasSkippedSignIn } = useAuth();
+  const ready = !isLoading && status !== 'loading';
 
   useEffect(() => {
-    if (!isLoading) SplashScreen.hideAsync();
-  }, [isLoading]);
+    if (ready) SplashScreen.hideAsync();
+  }, [ready]);
 
-  if (isLoading) return null;
+  if (!ready) return null;
+
+  // Opening sign-in screen until someone signs in or taps "Skip for now";
+  // the switch happens automatically when either changes.
+  const showWelcome = status === 'signedOut' && !hasSkippedSignIn;
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(app)" />
+      <Stack.Protected guard={showWelcome}>
+        <Stack.Screen name="welcome" />
+      </Stack.Protected>
+      <Stack.Protected guard={!showWelcome}>
+        <Stack.Screen name="(app)" />
+      </Stack.Protected>
     </Stack>
   );
 }
@@ -67,9 +79,11 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SettingsProvider>
         <AuthProvider>
-          <AppThemeProvider>
-            <RootNavigator />
-          </AppThemeProvider>
+          <SyncProvider>
+            <AppThemeProvider>
+              <RootNavigator />
+            </AppThemeProvider>
+          </SyncProvider>
         </AuthProvider>
       </SettingsProvider>
     </GestureHandlerRootView>

@@ -35,4 +35,7 @@ export const config = {
   port: int('PORT', 3000),
   databasePath: resolveDatabasePath(),
   sessionDays: int('SESSION_DAYS', 60),
+  // Photo backup caps, kept well inside Cloud Storage's free 5 GB.
+  mediaUserQuotaBytes: int('MEDIA_USER_QUOTA_MB', 1024) * 1024 * 1024,
+  mediaTotalQuotaBytes: int('MEDIA_TOTAL_QUOTA_MB', 4096) * 1024 * 1024,
 } as const;

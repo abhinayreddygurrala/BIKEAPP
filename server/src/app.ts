@@ -6,11 +6,18 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { sendError } from './errors.js';
 import { authRoutes } from './routes/auth.js';
+import { mediaRoutes } from './routes/media.js';
+import { syncRoutes } from './routes/sync.js';
+import type { MediaStore } from './storage.js';
 
 export type AppOptions = {
   db: Db;
   sessionDays: number;
   logger: boolean;
+  /** Photo backup; null turns it off (the phone keeps photos local). */
+  media?: MediaStore | null;
+  mediaUserQuotaBytes?: number;
+  mediaTotalQuotaBytes?: number;
 };
 
 /**
@@ -79,7 +86,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(authRoutes, { prefix: '/auth', db: options.db, sessionDays: options.sessionDays });
+  const media = options.media ?? null;
+  await app.register(authRoutes, { prefix: '/auth', db: options.db, sessionDays: options.sessionDays, media });
+  await app.register(syncRoutes, { prefix: '/sync', db: options.db, sessionDays: options.sessionDays });
+  await app.register(mediaRoutes, {
+    prefix: '/media',
+    db: options.db,
+    sessionDays: options.sessionDays,
+    media,
+    userQuotaBytes: options.mediaUserQuotaBytes ?? 1024 * 1024 * 1024,
+    totalQuotaBytes: options.mediaTotalQuotaBytes ?? 4 * 1024 * 1024 * 1024,
+  });
 
   return app;
 }

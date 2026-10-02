@@ -1,3 +1,5 @@
+import type { JSONSchema } from 'expo-foundation-models';
+
 import type { Units } from '@/features/ride-tracking/rideMath';
 import type { Expense } from '@/services/expenseService';
 import type { FuelLog } from '@/services/fuelService';
@@ -28,6 +30,155 @@ export const EXPENSE_CATEGORY_LABELS: Record<Expense['category'], string> = {
   loan_payment: 'Loan Payment',
   other: 'Other',
 };
+
+export type ExpenseFieldConfig = {
+  showProvider: boolean;
+  providerLabel: string;
+  providerPlaceholder: string;
+  showReference: boolean;
+  referenceLabel: string;
+  referencePlaceholder: string;
+  showPeriodStart: boolean;
+  showPeriodEnd: boolean;
+  periodEndLabel: string;
+};
+
+// What a category actually needs — an insurance card and a registration slip
+// carry real fields a generic "expense" doesn't (who issued it, a policy or
+// plate number, when it lapses); an accessory or loan payment doesn't need
+// any of that. Screens read this instead of branching per-category inline.
+export const EXPENSE_CATEGORY_FIELDS: Record<Expense['category'], ExpenseFieldConfig> = {
+  insurance: {
+    showProvider: true,
+    providerLabel: 'Insurance Company',
+    providerPlaceholder: 'e.g. Progressive',
+    showReference: true,
+    referenceLabel: 'Policy Number',
+    referencePlaceholder: 'e.g. ABC123456',
+    showPeriodStart: true,
+    showPeriodEnd: true,
+    periodEndLabel: 'Coverage Ends',
+  },
+  registration: {
+    showProvider: true,
+    providerLabel: 'Issuing Authority',
+    providerPlaceholder: 'e.g. State DMV',
+    showReference: true,
+    referenceLabel: 'Registration / Plate Number',
+    referencePlaceholder: 'e.g. 7ABC123',
+    showPeriodStart: false,
+    showPeriodEnd: true,
+    periodEndLabel: 'Expires On',
+  },
+  loan_payment: {
+    showProvider: true,
+    providerLabel: 'Lender',
+    providerPlaceholder: 'e.g. Honda Financial',
+    showReference: true,
+    referenceLabel: 'Account Number',
+    referencePlaceholder: 'Optional',
+    showPeriodStart: false,
+    showPeriodEnd: false,
+    periodEndLabel: '',
+  },
+  accessory: {
+    showProvider: false,
+    providerLabel: '',
+    providerPlaceholder: '',
+    showReference: false,
+    referenceLabel: '',
+    referencePlaceholder: '',
+    showPeriodStart: false,
+    showPeriodEnd: false,
+    periodEndLabel: '',
+  },
+  other: {
+    showProvider: false,
+    providerLabel: '',
+    providerPlaceholder: '',
+    showReference: false,
+    referenceLabel: '',
+    referencePlaceholder: '',
+    showPeriodStart: false,
+    showPeriodEnd: false,
+    periodEndLabel: '',
+  },
+};
+
+export type MaintenanceScanResult = {
+  type?: string;
+  odometer?: number;
+  cost?: number;
+  notes?: string;
+};
+
+/** A JSON schema for on-device vision extraction from a service receipt or
+ * invoice (see receiptScanService.ts). `type` is constrained to the app's
+ * own maintenance types so a match can be applied directly to the Type
+ * picker without a separate label-matching step. */
+export function buildMaintenanceScanSchema(): JSONSchema {
+  return {
+    type: 'object',
+    properties: {
+      type: {
+        type: 'string',
+        enum: Object.keys(MAINTENANCE_TYPE_LABELS),
+        description: 'Which kind of service this receipt or invoice is for',
+      },
+      odometer: { type: 'number', description: 'The odometer/mileage reading shown on the document, numeric only' },
+      cost: { type: 'number', description: 'The total amount charged, in dollars, numeric only' },
+      notes: { type: 'string', description: 'A short one-line summary of the work performed' },
+    },
+  };
+}
+
+export type ExpenseScanResult = {
+  provider?: string;
+  referenceNumber?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  description?: string;
+  amount?: number;
+};
+
+/** A JSON schema for on-device vision extraction (see receiptScanService.ts),
+ * shaped to match exactly the fields EXPENSE_CATEGORY_FIELDS shows for this
+ * category — scanning an accessory receipt won't ask the model for a policy
+ * number it was never going to show a field for. */
+export function buildExpenseScanSchema(category: Expense['category']): JSONSchema {
+  const fields = EXPENSE_CATEGORY_FIELDS[category];
+  const properties: Record<string, JSONSchema> = {
+    amount: { type: 'number', description: 'The total amount charged, in dollars, numeric only, no currency symbol' },
+    description: { type: 'string', description: 'A short one-line description of what this expense is for' },
+  };
+  if (fields.showProvider) {
+    properties.provider = { type: 'string', description: fields.providerLabel };
+  }
+  if (fields.showReference) {
+    properties.referenceNumber = { type: 'string', description: fields.referenceLabel };
+  }
+  if (fields.showPeriodStart) {
+    properties.periodStart = { type: 'string', description: 'The coverage/validity start date, as YYYY-MM-DD' };
+  }
+  if (fields.showPeriodEnd) {
+    properties.periodEnd = {
+      type: 'string',
+      description: `The ${fields.periodEndLabel.toLowerCase() || 'end'} date, as YYYY-MM-DD`,
+    };
+  }
+  return { type: 'object', properties };
+}
+
+/** Parses a free-text "YYYY-MM-DD"-ish date field (used for expense coverage
+ * periods and maintenance due dates) into ISO for storage. An empty string is
+ * valid — it means "not set", distinct from text that doesn't parse. */
+export function parseOptionalDateInput(text: string): { ok: true; iso: string | null } | { ok: false } {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, iso: null };
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return { ok: false };
+  return { ok: true, iso: parsed.toISOString() };
+}
 
 export type MaintenanceStats = {
   totalServiceCost: number;

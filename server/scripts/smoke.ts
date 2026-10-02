@@ -1,13 +1,25 @@
 // End-to-end check of the account API against a throwaway in-memory SQLite
 // database — nothing to install, nothing touched on disk.  Run: npm run smoke
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 
 import { buildApp } from '../src/app.js';
 import { migrate, openDatabase } from '../src/db.js';
+import { createGcsStore, type MediaStore } from '../src/storage.js';
 
 const db = openDatabase(':memory:');
 migrate(db, () => {});
-const app = await buildApp({ db, sessionDays: 60, logger: false });
+
+// Photo storage with a throwaway signing key; deletes are recorded instead of sent.
+const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const signer = createGcsStore('test-bucket', {
+  client_email: 'signer@example.iam.gserviceaccount.com',
+  private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+});
+const deletedObjects: string[] = [];
+const media: MediaStore = { signedUrl: signer.signedUrl, deleteObject: async (key) => void deletedObjects.push(key) };
+const MB = 1024 * 1024;
+const app = await buildApp({ db, sessionDays: 60, logger: false, media, mediaUserQuotaBytes: 20 * MB, mediaTotalQuotaBytes: 30 * MB });
 
 let passed = 0;
 function ok(name: string) {
@@ -277,6 +289,100 @@ console.log('Signing out and deleting the account');
   ok('account, sessions and the username are all gone after deletion');
 }
 
+console.log('Cloud backup');
+{
+  const api = client();
+  const mk = async (n: string, phone: string) =>
+    (await api('POST', '/auth/signup', {
+      body: { username: n, email: `${n.toLowerCase()}@example.com`, phone, password: 'backup-pass-123' },
+    })).json!.token as string;
+  const alice = await mk('Backup_Alice', '+1 501 234 3001');
+  const bob = await client()('POST', '/auth/signup', {
+    body: { username: 'Backup_Bob', email: 'backup_bob@example.com', phone: '+1 501 234 3002', password: 'backup-pass-123' },
+  }).then((r) => r.json!.token as string);
+
+  assert.equal((await api('POST', '/sync/push', { body: { upserts: [], deletes: [] } })).status, 401);
+  ok('backup requires being signed in');
+
+  const bigPoints = Array.from({ length: 25_000 }, (_, i) => ({ seq: i, lat: 36.1 + i / 1e5, lng: -94.1, recorded_at: '2026-10-16T10:00:00Z' }));
+  const push = await api('POST', '/sync/push', {
+    token: alice,
+    body: {
+      upserts: [
+        { kind: 'bikes', id: 'bike-1', data: { id: 'bike-1', name: 'Triumph' } },
+        { kind: 'rides', id: 'ride-1', data: { id: 'ride-1', bike_id: 'bike-1', distance_meters: 120000 } },
+        { kind: 'ride_points', id: 'ride-1', data: { points: bigPoints } },
+        { kind: 'settings', id: 'profile', data: { display_name: 'Alice', units: 'imperial' } },
+      ],
+      deletes: [],
+    },
+  });
+  assert.equal(push.status, 200, JSON.stringify(push.json));
+  ok(`saves records, including a ${(JSON.stringify(bigPoints).length / 1e6).toFixed(1)} MB ride of GPS points`);
+
+  const summary = await api('GET', '/sync/summary', { token: alice });
+  assert.deepEqual(summary.json?.counts, { bikes: 1, ride_points: 1, rides: 1, settings: 1 });
+  assert.ok(summary.json?.lastBackupAt);
+  ok('summary counts what is backed up');
+
+  const edited = await api('POST', '/sync/push', {
+    token: alice,
+    body: { upserts: [{ kind: 'bikes', id: 'bike-1', data: { id: 'bike-1', name: 'Triumph Speed Twin' } }], deletes: [] },
+  });
+  assert.equal(edited.status, 200);
+  const all: { kind: string; id: string; data: Record<string, unknown> }[] = [];
+  let cursor: { afterKind: string; afterId: string } | null = { afterKind: '', afterId: '' };
+  while (cursor) {
+    const res = await api('GET', `/sync/records?afterKind=${cursor.afterKind}&afterId=${cursor.afterId}`, { token: alice });
+    all.push(...res.json!.records);
+    cursor = res.json!.next;
+  }
+  assert.equal(all.length, 4);
+  assert.equal(all.find((r) => r.kind === 'bikes')?.data.name, 'Triumph Speed Twin');
+  assert.equal((all.find((r) => r.kind === 'ride_points')?.data.points as unknown[]).length, 25_000);
+  ok('downloads everything back, with edits applied and all GPS points intact');
+
+  const bobsView = await api('GET', '/sync/records', { token: bob });
+  assert.equal(bobsView.json?.records.length, 0);
+  assert.deepEqual((await api('GET', '/sync/summary', { token: bob })).json?.counts, {});
+  ok("one rider can never see another rider's data");
+
+  const removed = await api('POST', '/sync/push', { token: alice, body: { upserts: [], deletes: [{ kind: 'bikes', id: 'bike-1' }] } });
+  assert.equal(removed.json?.deleted, 1);
+  assert.equal((await api('GET', '/sync/summary', { token: alice })).json?.counts.bikes, undefined);
+  ok('deleting on the phone deletes from the backup');
+
+  const junk = await api('POST', '/sync/push', {
+    token: alice,
+    body: { upserts: [{ kind: 'passwords', id: 'x', data: {} }], deletes: [] },
+  });
+  assert.equal(junk.status, 400);
+  ok('unknown kinds of data are rejected');
+
+  const many = Array.from({ length: 450 }, (_, i) => ({ kind: 'fuel_logs', id: `fuel-${String(i).padStart(4, '0')}`, data: { i } }));
+  assert.equal((await api('POST', '/sync/push', { token: alice, body: { upserts: many, deletes: [] } })).status, 200);
+  const more = Array.from({ length: 300 }, (_, i) => ({ kind: 'fuel_logs', id: `fuel-${String(450 + i).padStart(4, '0')}`, data: { i } }));
+  assert.equal((await api('POST', '/sync/push', { token: alice, body: { upserts: more, deletes: [] } })).status, 200);
+  let pages = 0;
+  let count = 0;
+  cursor = { afterKind: '', afterId: '' };
+  while (cursor) {
+    const res = await api('GET', `/sync/records?afterKind=${cursor.afterKind}&afterId=${cursor.afterId}`, { token: alice });
+    pages += 1;
+    count += res.json!.records.length;
+    cursor = res.json!.next;
+  }
+  assert.equal(count, 753);
+  assert.ok(pages >= 2);
+  ok(`large backups download completely across ${pages} pages`);
+
+  const del = await api('DELETE', '/auth/account', { token: alice, body: { password: 'backup-pass-123' } });
+  assert.equal(del.status, 204);
+  const leftover = db.prepare(`SELECT count(*) AS n FROM user_records WHERE user_id NOT IN (SELECT id FROM users)`).get() as { n: number };
+  assert.equal(Number(leftover.n), 0);
+  ok('deleting the account deletes its whole backup');
+}
+
 console.log('Rate limiting and forged addresses');
 {
   const spoofer = async (i: number) =>
@@ -306,6 +412,70 @@ console.log('Rate limiting and forged addresses');
   }
   assert.equal(blocked, 0, 'different real visitors behind the proxy must not share one limit');
   ok('visitors behind a private-network proxy are told apart by their real address');
+}
+
+console.log('Photo backup');
+{
+  const api = client();
+  const signup = (n: string, phone: string) =>
+    client()('POST', '/auth/signup', {
+      body: { username: n, email: `${n.toLowerCase()}@example.com`, phone, password: 'photo-pass-123' },
+    }).then((r) => ({ token: r.json!.token as string, id: r.json!.user.id as string }));
+  const carol = await signup('Photo_Carol', '+1 501 234 4001');
+  const dave = await signup('Photo_Dave', '+1 501 234 4002');
+
+  assert.equal((await api('POST', '/media/upload-url', { body: { path: 'photos/bikes/a.jpg', size: 10 } })).status, 401);
+  ok('photo upload requires being signed in');
+
+  const up = await api('POST', '/media/upload-url', { token: carol.token, body: { path: 'photos/bikes/bike-1.jpg', size: 400_000 } });
+  assert.equal(up.status, 200, JSON.stringify(up.json));
+  const url = new URL(up.json!.url);
+  assert.equal(url.host, 'storage.googleapis.com');
+  assert.equal(url.pathname, `/test-bucket/users/${carol.id}/photos/bikes/bike-1.jpg`);
+  assert.equal(url.searchParams.get('X-Goog-SignedHeaders'), 'content-type;host;x-goog-content-length-range');
+  assert.match(url.searchParams.get('X-Goog-Signature') ?? '', /^[0-9a-f]{512}$/);
+  assert.deepEqual(up.json!.headers, { 'Content-Type': 'image/jpeg', 'x-goog-content-length-range': '0,400000' });
+  ok('gives a signed, size-limited upload link inside the account’s own folder');
+
+  for (const path of ['../users/x/a.jpg', 'photos/bikes/a.exe', 'secrets/a.jpg', 'photos/bikes/../../a.jpg']) {
+    const bad = await api('POST', '/media/upload-url', { token: carol.token, body: { path, size: 10 } });
+    assert.equal(bad.status, 400, path);
+  }
+  ok('refuses paths outside the photo folders');
+
+  await api('POST', '/media/upload-url', { token: carol.token, body: { path: 'attachments/maintenance/r1.pdf', size: 15 * MB } });
+  const over = await api('POST', '/media/upload-url', { token: carol.token, body: { path: 'attachments/maintenance/r2.jpg', size: 5 * MB } });
+  assert.equal(over.status, 413);
+  assert.equal(over.json?.error.code, 'quota_exceeded');
+  const replace = await api('POST', '/media/upload-url', { token: carol.token, body: { path: 'photos/bikes/bike-1.jpg', size: 4 * MB } });
+  assert.equal(replace.status, 200, 'replacing a file only counts its new size');
+  ok('enforces the per-account cap (replacing a photo doesn’t double-count)');
+
+  await api('POST', '/media/upload-url', { token: dave.token, body: { path: 'attachments/maintenance/d1.pdf', size: 10 * MB } });
+  const full = await api('POST', '/media/upload-url', { token: dave.token, body: { path: 'attachments/maintenance/d2.pdf', size: 2 * MB } });
+  assert.equal(full.status, 413);
+  assert.equal(full.json?.error.code, 'storage_full');
+  ok('enforces the whole-bucket cap that keeps storage in the free tier');
+
+  const files = await api('GET', '/media/files', { token: carol.token });
+  assert.deepEqual(files.json!.files.map((f: { path: string }) => f.path), ['attachments/maintenance/r1.pdf', 'photos/bikes/bike-1.jpg']);
+  assert.equal(files.json!.usedBytes, 19 * MB);
+  assert.equal(new URL(files.json!.files[0].url).searchParams.get('X-Goog-Expires'), '3600');
+  const daveFiles = await api('GET', '/media/files', { token: dave.token });
+  assert.equal(daveFiles.json!.files.length, 1);
+  ok('lists only the account’s own files, with download links');
+
+  const del = await api('POST', '/media/delete', { token: carol.token, body: { paths: ['attachments/maintenance/r1.pdf'] } });
+  assert.equal(del.status, 200);
+  assert.deepEqual(deletedObjects, [`users/${carol.id}/attachments/maintenance/r1.pdf`]);
+  assert.equal((await api('GET', '/media/files', { token: carol.token })).json!.files.length, 1);
+  ok('deleting on the phone deletes from storage');
+
+  const gone = await api('DELETE', '/auth/account', { token: carol.token, body: { password: 'photo-pass-123' } });
+  assert.equal(gone.status, 204);
+  assert.ok(deletedObjects.includes(`users/${carol.id}/photos/bikes/bike-1.jpg`));
+  assert.equal((db.prepare('SELECT count(*) AS n FROM user_media WHERE user_id = ?').get(carol.id) as { n: number }).n, 0);
+  ok('deleting the account deletes all its photos');
 }
 
 console.log('Malformed requests');

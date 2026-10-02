@@ -23,6 +23,8 @@ type SettingsContextValue = {
   updateProfile: (updates: Partial<Pick<LocalProfile, 'display_name' | 'bio'>>) => Promise<void>;
   setAvatar: (localUri: string) => Promise<void>;
   removeAvatar: () => Promise<void>;
+  /** Re-reads everything from the phone's database (after a restore). */
+  reload: () => Promise<void>;
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -41,9 +43,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [textScale, setTextScaleState] = useState<TextScale>(1);
   const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
 
-  useEffect(() => {
-    getLocalSettings()
-      .then((row) => {
+  const reload = useCallback(
+    () =>
+      getLocalSettings().then((row) => {
         // Applied here, before isLoading flips and the splash screen hides,
         // so the first visible frame already has the right theme.
         applyThemeMode(row.theme_mode);
@@ -55,10 +57,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setUnitsState(row.units);
         setTextScaleState(row.text_scale);
         setThemeModeState(row.theme_mode);
-      })
+      }),
+    []
+  );
+
+  useEffect(() => {
+    reload()
       .catch((e) => console.error('[SettingsProvider] failed to load settings', e))
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [reload]);
 
   // The setters never read current state, so they're created once and stay
   // the same function forever. Components that hold onto one (like the text
@@ -113,8 +120,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       updateProfile,
       setAvatar,
       removeAvatar,
+      reload,
     }),
-    [isLoading, profile, units, setUnits, textScale, setTextScale, themeMode, setThemeMode, updateProfile, setAvatar, removeAvatar]
+    [isLoading, profile, units, setUnits, textScale, setTextScale, themeMode, setThemeMode, updateProfile, setAvatar, removeAvatar, reload]
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;

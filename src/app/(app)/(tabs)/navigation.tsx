@@ -1,7 +1,7 @@
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -13,6 +13,7 @@ import { useSettings } from '@/features/settings/SettingsContext';
 import { getAllLocalRides } from '@/features/ride-tracking/rideLocalDb';
 import { decodeRoutePolyline, distanceUnitLabel, formatDistance, formatDuration } from '@/features/ride-tracking/rideMath';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { GOOGLE_DARK_MAP_STYLE } from '@/constants/googleMapStyles';
 import { useTheme } from '@/hooks/use-theme';
 import { planRoute, type LatLng, type RouteOptions } from '@/services/routePlannerService';
 import { askTripPlanner, isTripPlannerAvailable } from '@/services/tripPlannerService';
@@ -63,6 +64,22 @@ export default function NavigationScreen() {
 
   useEffect(() => {
     isTripPlannerAvailable().then(setAiAvailable);
+  }, []);
+
+  // Open the map on the rider rather than Google's default world view — but
+  // only if location is already allowed; this tab doesn't prompt on its own.
+  useEffect(() => {
+    (async () => {
+      const permission = await Location.getForegroundPermissionsAsync();
+      if (permission.status !== 'granted') return;
+      const last = await Location.getLastKnownPositionAsync().catch(() => null);
+      if (last) {
+        mapRef.current?.animateToRegion(
+          { latitude: last.coords.latitude, longitude: last.coords.longitude, latitudeDelta: 0.05, longitudeDelta: 0.05 },
+          0
+        );
+      }
+    })();
   }, []);
 
   // Cheap (local SQLite only) so it's fine to load once up front rather than
@@ -179,9 +196,9 @@ export default function NavigationScreen() {
       <SafeAreaView style={styles.flex} edges={['top']}>
         <MapView
           ref={mapRef}
-          provider={PROVIDER_DEFAULT}
+          provider={PROVIDER_GOOGLE}
           style={styles.map}
-          userInterfaceStyle={scheme === 'dark' ? 'dark' : 'light'}
+          customMapStyle={scheme === 'dark' ? GOOGLE_DARK_MAP_STYLE : []}
           showsUserLocation
           showsCompass={false}>
           {mode === 'plan' && destination ? (

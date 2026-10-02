@@ -13,6 +13,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useSettings } from '@/features/settings/SettingsContext';
+import { useSync } from '@/features/sync/SyncContext';
 import { TEXT_SCALE_LABELS, type ThemeMode } from '@/features/settings/settingsLocalDb';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes } from '@/services/bikesService';
@@ -21,6 +22,16 @@ import { importBackup, pickBackupFile } from '@/services/importService';
 import { listRides } from '@/services/ridesService';
 
 const appVersion = Constants.expoConfig?.version;
+
+function describeLastBackup(iso: string | null): string {
+  if (!iso) return 'Not backed up yet';
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return 'Backed up just now';
+  if (minutes < 60) return `Backed up ${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Backed up ${hours} hr ago`;
+  return `Backed up ${new Date(iso).toLocaleDateString()}`;
+}
 
 const THEME_MODE_LABELS: Record<ThemeMode, string> = {
   system: 'System appearance',
@@ -31,7 +42,9 @@ const THEME_MODE_LABELS: Record<ThemeMode, string> = {
 export default function SettingsScreen() {
   const { profile, units, setUnits, textScale, themeMode } = useSettings();
   const { status: authStatus, user: authUser, signOut } = useAuth();
+  const { isSyncing, lastSyncedAt, photoBackup, backUpNow, restore } = useSync();
   const theme = useTheme();
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -55,6 +68,40 @@ export default function SettingsScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: () => void signOut() },
     ]);
+  };
+
+  const onBackUp = async () => {
+    setSyncError(null);
+    try {
+      await backUpNow();
+    } catch {
+      setSyncError('Couldn’t reach the Odomap server. Your data is safe on this phone — try again later.');
+    }
+  };
+
+  const onRestore = () => {
+    Alert.alert(
+      'Restore from Account?',
+      'Brings your account’s backup onto this phone, including photos and receipts. Entries already on this phone are replaced by the backed-up copy; nothing else is deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          onPress: async () => {
+            setSyncError(null);
+            try {
+              const count = await restore();
+              const [bikes, rides] = await Promise.all([listBikes(), listRides()]);
+              setBikeCount(bikes.length);
+              setRideCount(rides.length);
+              Alert.alert('Restore Complete', `${count} item${count === 1 ? '' : 's'} restored from your account.`);
+            } catch {
+              setSyncError('Couldn’t restore right now. Check your connection and try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const onExport = async () => {
@@ -144,7 +191,7 @@ export default function SettingsScreen() {
               {authStatus === 'signedOut' ? (
                 <SettingsRow
                   title="Sign In or Create Account"
-                  subtitle="Needed for group chat — your rides stay on this phone"
+                  subtitle="Back up your rides, bikes & records"
                   onPress={() => router.push('/(app)/auth/sign-in')}
                   showDivider
                 />
@@ -156,21 +203,35 @@ export default function SettingsScreen() {
                 showDivider={authStatus === 'signedIn'}
               />
               {authStatus === 'signedIn' ? (
-                <>
-                  <SettingsRow
-                    title="Change Password"
-                    onPress={() => router.push('/(app)/settings/change-password')}
-                    showDivider
-                  />
-                  <SettingsRow title="Sign Out" onPress={onSignOut} showChevron={false} showDivider />
-                  <SettingsRow
-                    title="Delete Account"
-                    destructive
-                    onPress={() => router.push('/(app)/settings/delete-account')}
-                  />
-                </>
+                <SettingsRow
+                  title="Change Password"
+                  onPress={() => router.push('/(app)/settings/change-password')}
+                />
               ) : null}
             </ThemedView>
+            {authStatus === 'signedIn' ? (
+              <ThemedView type="backgroundElement" style={[styles.card, styles.controlGap]}>
+                <SettingsRow
+                  title="Back Up Now"
+                  subtitle={
+                    isSyncing
+                      ? 'Backing up…'
+                      : photoBackup === 'full'
+                        ? `${describeLastBackup(lastSyncedAt)} · photo space full`
+                        : describeLastBackup(lastSyncedAt)
+                  }
+                  onPress={onBackUp}
+                  loading={isSyncing}
+                  showDivider
+                />
+                <SettingsRow title="Restore from Account" subtitle="Bring your backup onto this phone" onPress={onRestore} />
+              </ThemedView>
+            ) : null}
+            {syncError ? (
+              <ThemedText type="small" style={[styles.exportError, { color: theme.danger }]}>
+                {syncError}
+              </ThemedText>
+            ) : null}
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(80).duration(450)} style={styles.section}>
@@ -247,6 +308,21 @@ export default function SettingsScreen() {
               />
             </ThemedView>
           </Animated.View>
+
+          {/* Last on the page, the usual iOS spot, so the destructive actions
+              are out of the way of everyday settings. */}
+          {authStatus === 'signedIn' ? (
+            <Animated.View entering={FadeInDown.delay(330).duration(450)} style={styles.section}>
+              <ThemedView type="backgroundElement" style={styles.card}>
+                <SettingsRow title="Sign Out" onPress={onSignOut} showChevron={false} showDivider />
+                <SettingsRow
+                  title="Delete Account"
+                  destructive
+                  onPress={() => router.push('/(app)/settings/delete-account')}
+                />
+              </ThemedView>
+            </Animated.View>
+          ) : null}
 
           <Animated.View entering={FadeInDown.delay(360).duration(450)} style={styles.footer}>
             <ThemedText type="small" themeColor="textSecondary">

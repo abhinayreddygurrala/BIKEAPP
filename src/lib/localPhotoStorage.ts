@@ -1,5 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
+import { shrinkImage } from './shrinkImage';
+
 export type PhotoCategory = 'avatar' | 'bikes' | 'maintenance';
 
 function categoryDir(category: PhotoCategory): Directory {
@@ -25,7 +27,7 @@ export async function savePhoto(
   sourceUri: string
 ): Promise<string> {
   const destination = photoFile(category, entityId);
-  await new File(sourceUri).copy(destination, { overwrite: true });
+  await new File(await shrinkImage(sourceUri)).copy(destination, { overwrite: true });
   return destination.name;
 }
 

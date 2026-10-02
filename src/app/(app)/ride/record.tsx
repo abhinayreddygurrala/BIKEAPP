@@ -209,7 +209,8 @@ export default function RecordRideScreen() {
         ref={mapRef}
         coordinates={recorder.coordinates}
         showsUserLocation
-        followsUserLocation={isRecording}
+        followUser={isRecording}
+        showEndMarker={false}
         fitOnChange={isIdle}
         style={styles.map}>
         <SafeAreaView

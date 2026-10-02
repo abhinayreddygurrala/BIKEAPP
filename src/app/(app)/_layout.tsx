@@ -109,6 +109,24 @@ export default function AppLayout() {
         }}
       />
       <Stack.Screen
+        name="maintenance/new-expense"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Log Expense',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
+        name="maintenance/edit-expense"
+        options={{
+          presentation: 'modal',
+          headerShown: true,
+          title: 'Edit Expense',
+          headerLeft: CancelHeaderButton,
+        }}
+      />
+      <Stack.Screen
         name="settings/account"
         options={{ headerShown: true, title: 'Profile', headerBackTitle: 'Settings' }}
       />

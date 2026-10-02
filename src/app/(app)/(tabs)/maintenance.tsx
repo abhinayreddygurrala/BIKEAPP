@@ -405,15 +405,32 @@ export default function MaintenanceScreen() {
                     }>
                     <ThemedView type="backgroundElement" style={styles.card}>
                       <View style={styles.cardHeaderRow}>
-                        <ThemedText type="smallBold">{EXPENSE_CATEGORY_LABELS[expense.category]}</ThemedText>
-                        <ThemedText type="default" themeColor="textSecondary">
-                          ›
+                        <ThemedText type="smallBold">
+                          {EXPENSE_CATEGORY_LABELS[expense.category]}
+                          {expense.provider ? ` · ${expense.provider}` : ''}
                         </ThemedText>
+                        <View style={styles.cardHeaderRight}>
+                          {expense.attachments.length > 0 ? (
+                            <ThemedText type="small" themeColor="textSecondary">
+                              📎 {expense.attachments.length}
+                            </ThemedText>
+                          ) : null}
+                          <ThemedText type="default" themeColor="textSecondary">
+                            ›
+                          </ThemedText>
+                        </View>
                       </View>
                       <ThemedText type="small" themeColor="textSecondary">
                         {new Date(expense.incurred_at).toLocaleDateString()} · ${expense.amount.toFixed(2)}
                         {expense.description ? ` · ${expense.description}` : ''}
                       </ThemedText>
+                      {expense.reference_number || expense.period_end ? (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {expense.reference_number ? `#${expense.reference_number}` : ''}
+                          {expense.reference_number && expense.period_end ? ' · ' : ''}
+                          {expense.period_end ? `Expires ${new Date(expense.period_end).toLocaleDateString()}` : ''}
+                        </ThemedText>
+                      ) : null}
                     </ThemedView>
                   </Pressable>
                 ))

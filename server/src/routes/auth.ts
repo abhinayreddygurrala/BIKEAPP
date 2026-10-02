@@ -6,6 +6,7 @@ import { createSession, FailureTracker, requireAuth, toAccountUser, type UserRow
 import type { Db } from '../db.js';
 import { sendError, uniqueViolation } from '../errors.js';
 import { hashPassword, verifyPassword } from '../security.js';
+import type { MediaStore } from '../storage.js';
 import {
   changePasswordBody,
   checkPassword,
@@ -17,12 +18,13 @@ import {
   signInBody,
   signUpBody,
 } from '../validation.js';
+import { deleteAllMedia } from './media.js';
 
-type Options = { db: Db; sessionDays: number };
+type Options = { db: Db; sessionDays: number; media: MediaStore | null };
 
 const INVALID_REQUEST = 'That request wasn’t valid.';
 
-export const authRoutes: FastifyPluginAsync<Options> = async (app, { db, sessionDays }) => {
+export const authRoutes: FastifyPluginAsync<Options> = async (app, { db, sessionDays, media }) => {
   const guard = requireAuth(db, sessionDays);
   const failures = new FailureTracker();
   // Signing in with an unknown account still burns a real password hash, so
@@ -182,7 +184,9 @@ export const authRoutes: FastifyPluginAsync<Options> = async (app, { db, session
         return sendError(reply, 403, 'wrong_password', 'That password is incorrect.', 'password');
       }
 
-      // Sessions (and, later, anything else tied to this user) go with it via ON DELETE CASCADE.
+      // Photos first, while the list of them still exists; then the account,
+      // which takes sessions and backed-up records with it (ON DELETE CASCADE).
+      await deleteAllMedia(db, media, userId, (error) => request.log.error(error));
       db.prepare('DELETE FROM users WHERE id = ?').run(userId);
       return reply.status(204).send();
     }

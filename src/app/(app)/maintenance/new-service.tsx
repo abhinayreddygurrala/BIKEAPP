@@ -11,11 +11,12 @@ import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { SelectSheet } from '@/components/ui/SelectSheet';
 import { Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
-import { MAINTENANCE_TYPE_LABELS } from '@/features/maintenance/maintenanceMath';
+import { buildMaintenanceScanSchema, MAINTENANCE_TYPE_LABELS, type MaintenanceScanResult } from '@/features/maintenance/maintenanceMath';
 import { distanceToMeters, distanceUnitLabel } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { uuidv4 } from '@/lib/uuid';
 import { createMaintenanceRecord, type MaintenanceType } from '@/services/maintenanceService';
+import { scanDocument } from '@/services/receiptScanService';
 
 const TYPE_LABELS = MAINTENANCE_TYPE_LABELS;
 const TYPE_OPTIONS = Object.entries(TYPE_LABELS) as [MaintenanceType, string][];
@@ -26,6 +27,7 @@ export default function NewServiceScreen() {
   const theme = useTheme();
 
   const [type, setType] = useState<MaintenanceType>(initialType ?? 'oil_change');
+  const [typeTouched, setTypeTouched] = useState(false);
   const [typePickerVisible, setTypePickerVisible] = useState(false);
   const [odometer, setOdometer] = useState('');
   const [cost, setCost] = useState('');
@@ -36,16 +38,43 @@ export default function NewServiceScreen() {
   // record these would attach to doesn't exist yet.
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   const inputStyle = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }];
+
+  // Only fills a field that's still empty (or, for Type, only if the picker
+  // hasn't been touched yet) — the model augments what you haven't entered,
+  // it never overwrites a choice you already made.
+  const autoFillFromPhoto = async (uri: string) => {
+    setScanning(true);
+    try {
+      const result = await scanDocument<MaintenanceScanResult>(
+        uri,
+        'Extract the fields from this photo of a motorcycle service receipt or invoice.',
+        buildMaintenanceScanSchema()
+      );
+      if (!result) return;
+      if (!typeTouched && result.type && result.type in MAINTENANCE_TYPE_LABELS) {
+        setType(result.type as MaintenanceType);
+      }
+      if (result.odometer != null && !odometer.trim()) setOdometer(String(result.odometer));
+      if (result.cost != null && !cost.trim()) setCost(String(result.cost));
+      if (result.notes && !notes.trim()) setNotes(result.notes);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const onPickAttachment = (item: { kind: AttachmentItem['kind']; uri: string; name?: string }) => {
     setAttachments((prev) => [...prev, { id: uuidv4(), ...item }]);
     // Wait a frame so the new tile has actually laid out before scrolling —
     // otherwise this scrolls to the end as it was before the tile appeared.
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    if (item.kind === 'image') {
+      void autoFillFromPhoto(item.uri);
+    }
   };
 
   const isMod = type === 'mod';
@@ -175,6 +204,11 @@ export default function NewServiceScreen() {
               onPick={onPickAttachment}
               onRemove={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
             />
+            {scanning ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                Reading photo and filling in what it finds…
+              </ThemedText>
+            ) : null}
 
             {error ? (
               <ThemedText type="small" style={{ color: theme.danger }}>
@@ -196,7 +230,10 @@ export default function NewServiceScreen() {
         options={TYPE_OPTIONS.map(([, label]) => label)}
         onSelect={(label) => {
           const match = TYPE_OPTIONS.find(([, l]) => l === label);
-          if (match) setType(match[0]);
+          if (match) {
+            setType(match[0]);
+            setTypeTouched(true);
+          }
         }}
         onClose={() => setTypePickerVisible(false)}
       />

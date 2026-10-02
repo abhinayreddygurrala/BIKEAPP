@@ -38,7 +38,8 @@ export function migrate(db: Db, log: (message: string) => void): void {
     (db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map((r) => r.name)
   );
   const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
+    // Only real migrations (001_name.sql): skips stray files like macOS's ._ metadata.
+    .filter((f) => /^\d{3}_[\w-]+\.sql$/.test(f))
     .sort();
 
   for (const file of files) {

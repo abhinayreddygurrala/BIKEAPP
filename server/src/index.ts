@@ -1,12 +1,23 @@
 import { buildApp } from './app.js';
 import { config } from './config.js';
 import { migrate, openDatabase } from './db.js';
+import { mediaStoreFromEnv } from './storage.js';
 
 const db = openDatabase(config.databasePath);
 migrate(db, (message) => console.log(`[migrate] ${message}`));
 console.log(`[db] using ${config.databasePath}`);
 
-const app = await buildApp({ db, sessionDays: config.sessionDays, logger: true });
+const media = mediaStoreFromEnv();
+console.log(media ? '[media] photo backup on' : '[media] photo backup off (GCS_BUCKET / GCS_KEY_FILE not set)');
+
+const app = await buildApp({
+  db,
+  sessionDays: config.sessionDays,
+  logger: true,
+  media,
+  mediaUserQuotaBytes: config.mediaUserQuotaBytes,
+  mediaTotalQuotaBytes: config.mediaTotalQuotaBytes,
+});
 
 // Expired sessions are already rejected on use; this just keeps the table small.
 const cleanup = setInterval(

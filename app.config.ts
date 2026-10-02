@@ -37,6 +37,16 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-router",
+    // Google Maps for every map in the app. The key comes from the
+    // gitignored .env (it ends up inside the app, as all Google Maps SDK keys
+    // do) and is locked in Google Cloud to this bundle ID and the Maps SDK
+    // for iOS only.
+    [
+      "react-native-maps",
+      {
+        iosGoogleMapsApiKey: process.env.GOOGLE_MAPS_IOS_API_KEY,
+      },
+    ],
     [
       "expo-splash-screen",
       {

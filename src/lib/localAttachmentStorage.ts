@@ -1,5 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
+import { shrinkImage } from './shrinkImage';
+
 export type AttachmentKind = 'image' | 'pdf';
 
 // Unlike localPhotoStorage's one-file-per-entity convention, a maintenance
@@ -18,7 +20,8 @@ export async function saveAttachment(
 ): Promise<string> {
   const filename = `${attachmentId}.${kind === 'pdf' ? 'pdf' : 'jpg'}`;
   const destination = new File(attachmentsDir(), filename);
-  await new File(sourceUri).copy(destination, { overwrite: true });
+  const source = kind === 'image' ? await shrinkImage(sourceUri) : sourceUri;
+  await new File(source).copy(destination, { overwrite: true });
   return filename;
 }
 
