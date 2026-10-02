@@ -4,6 +4,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, type ReactNode } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { LaunchIntro } from '@/components/ui/LaunchIntro';
 import { AuthProvider, useAuth } from '@/features/auth/AuthContext';
 import { SettingsProvider, useSettings } from '@/features/settings/SettingsContext';
 import { SyncProvider } from '@/features/sync/SyncContext';
@@ -45,25 +46,26 @@ function RootNavigator() {
   const { status, hasSkippedSignIn } = useAuth();
   const ready = !isLoading && status !== 'loading';
 
-  useEffect(() => {
-    if (ready) SplashScreen.hideAsync();
-  }, [ready]);
-
-  if (!ready) return null;
-
   // Opening sign-in screen until someone signs in or taps "Skip for now";
   // the switch happens automatically when either changes.
   const showWelcome = status === 'signedOut' && !hasSkippedSignIn;
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={showWelcome}>
-        <Stack.Screen name="welcome" />
-      </Stack.Protected>
-      <Stack.Protected guard={!showWelcome}>
-        <Stack.Screen name="(app)" />
-      </Stack.Protected>
-    </Stack>
+    <>
+      {ready ? (
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Protected guard={showWelcome}>
+            <Stack.Screen name="welcome" />
+          </Stack.Protected>
+          <Stack.Protected guard={!showWelcome}>
+            <Stack.Screen name="(app)" />
+          </Stack.Protected>
+        </Stack>
+      ) : null}
+      {/* Takes over from the native splash screen (and hides it), then
+          reveals the first screen once it's ready. */}
+      <LaunchIntro ready={ready} />
+    </>
   );
 }
 
