@@ -13,7 +13,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useSettings } from '@/features/settings/SettingsContext';
-import { useSync } from '@/features/sync/SyncContext';
+import { useSync, type SyncState } from '@/features/sync/SyncContext';
 import { TEXT_SCALE_LABELS, type ThemeMode } from '@/features/settings/settingsLocalDb';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes } from '@/services/bikesService';
@@ -23,14 +23,17 @@ import { listRides } from '@/services/ridesService';
 
 const appVersion = Constants.expoConfig?.version;
 
-function describeLastBackup(iso: string | null): string {
-  if (!iso) return 'Not backed up yet';
+function describeSaveStatus(state: SyncState, iso: string | null, photosFull: boolean): string {
+  if (state === 'saving') return 'Saving to your account…';
+  if (state === 'offline') return 'Offline — changes will save when you’re connected';
+  if (photosFull) return 'All changes saved · photo space full';
+  if (!iso) return 'Saving to your account…';
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (minutes < 1) return 'Backed up just now';
-  if (minutes < 60) return `Backed up ${minutes} min ago`;
+  if (minutes < 1) return 'All changes saved · just now';
+  if (minutes < 60) return `All changes saved · ${minutes} min ago`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `Backed up ${hours} hr ago`;
-  return `Backed up ${new Date(iso).toLocaleDateString()}`;
+  if (hours < 24) return `All changes saved · ${hours} hr ago`;
+  return `All changes saved · ${new Date(iso).toLocaleDateString()}`;
 }
 
 const THEME_MODE_LABELS: Record<ThemeMode, string> = {
@@ -42,7 +45,7 @@ const THEME_MODE_LABELS: Record<ThemeMode, string> = {
 export default function SettingsScreen() {
   const { profile, units, setUnits, textScale, themeMode } = useSettings();
   const { status: authStatus, user: authUser, signOut } = useAuth();
-  const { isSyncing, lastSyncedAt, photoBackup, backUpNow, restore } = useSync();
+  const { syncState, lastSyncedAt, photoBackup, restore } = useSync();
   const theme = useTheme();
   const [syncError, setSyncError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -70,19 +73,10 @@ export default function SettingsScreen() {
     ]);
   };
 
-  const onBackUp = async () => {
-    setSyncError(null);
-    try {
-      await backUpNow();
-    } catch {
-      setSyncError('Couldn’t reach the Odomap server. Your data is safe on this phone — try again later.');
-    }
-  };
-
   const onRestore = () => {
     Alert.alert(
       'Restore from Account?',
-      'Brings your account’s backup onto this phone, including photos and receipts. Entries already on this phone are replaced by the backed-up copy; nothing else is deleted.',
+      'Brings everything saved in your account onto this phone, including photos and receipts. Entries already on this phone are replaced by the backed-up copy; nothing else is deleted.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -185,13 +179,14 @@ export default function SettingsScreen() {
             {authStatus === 'signedIn' ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.controlCaption}>
                 {authUser ? `Signed in as @${authUser.username}` : 'Signed in'}
+                {`\n${describeSaveStatus(syncState, lastSyncedAt, photoBackup === 'full')}`}
               </ThemedText>
             ) : null}
             <ThemedView type="backgroundElement" style={styles.card}>
               {authStatus === 'signedOut' ? (
                 <SettingsRow
                   title="Sign In or Create Account"
-                  subtitle="Back up your rides, bikes & records"
+                  subtitle="Save your rides, bikes & records to the cloud"
                   onPress={() => router.push('/(app)/auth/sign-in')}
                   showDivider
                 />
@@ -212,19 +207,10 @@ export default function SettingsScreen() {
             {authStatus === 'signedIn' ? (
               <ThemedView type="backgroundElement" style={[styles.card, styles.controlGap]}>
                 <SettingsRow
-                  title="Back Up Now"
-                  subtitle={
-                    isSyncing
-                      ? 'Backing up…'
-                      : photoBackup === 'full'
-                        ? `${describeLastBackup(lastSyncedAt)} · photo space full`
-                        : describeLastBackup(lastSyncedAt)
-                  }
-                  onPress={onBackUp}
-                  loading={isSyncing}
-                  showDivider
+                  title="Restore from Account"
+                  subtitle="Bring your saved data onto this phone"
+                  onPress={onRestore}
                 />
-                <SettingsRow title="Restore from Account" subtitle="Bring your backup onto this phone" onPress={onRestore} />
               </ThemedView>
             ) : null}
             {syncError ? (

@@ -1,3 +1,4 @@
+import { addDatabaseChangeListener } from 'expo-sqlite';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, AppState } from 'react-native';
 
@@ -15,81 +16,121 @@ import {
 } from './cloudSync';
 import { pushMedia, restoreMedia, type MediaResult } from './mediaSync';
 
+export type SyncState = 'idle' | 'saving' | 'saved' | 'offline';
+
 type SyncContextValue = {
-  isSyncing: boolean;
+  syncState: SyncState;
   lastSyncedAt: string | null;
   /** 'full' when the account's photo space (1 GB) is used up. */
   photoBackup: MediaResult | null;
-  /** Backs up anything changed. Throws on failure (for the Settings button). */
-  backUpNow: () => Promise<void>;
-  /** Downloads the account's backup into this phone. Returns how many records came back. */
+  /** Downloads the account's data into this phone. Returns how many records came back. */
   restore: () => Promise<number>;
 };
 
 const SyncContext = createContext<SyncContextValue | null>(null);
 
-// Opening the app backs up at most this often; leaving it always does.
-const FOREGROUND_THROTTLE_MS = 5 * 60 * 1000;
+// Saves land in the cloud this long after the last change, so a burst of
+// edits (or a whole form) goes up as one quick upload.
+const SAVE_DELAY_MS = 4000;
+// Offline saves are retried this often (and whenever the app is reopened).
+const RETRY_DELAY_MS = 60 * 1000;
+// The app's own bookkeeping, and GPS points (sent once the ride is finished).
+const IGNORED_TABLES = new Set(['sync_state', 'sync_meta', 'media_state', 'ride_points_local']);
 
 /**
- * Keeps a copy of everything on the phone in the signed-in account, on the
- * Odomap server. Runs on sign-in, when the app opens and when it's left, and
- * from Settings. Signed out (or offline), nothing happens and nothing breaks:
- * the phone's own database is always the source of truth.
+ * Signed in, everything saved on the phone goes to the account's database on
+ * the Odomap server automatically, a few seconds after each change — no
+ * backup button. The phone's own database still answers every screen
+ * instantly and works with no signal; the cloud copy catches up when it can.
  */
 export function SyncProvider({ children }: { children: ReactNode }) {
   const { status, user, authedRequest } = useAuth();
   const { reload: reloadSettings } = useSettings();
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>('idle');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [photoBackup, setPhotoBackup] = useState<MediaResult | null>(null);
-  const running = useRef<Promise<void> | null>(null);
-  const lastAttempt = useRef(0);
+  const running = useRef<Promise<unknown> | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabled = status === 'signedIn' && !!user && isApiConfigured();
 
-  // One backup at a time; a second request while one runs just waits for it.
-  const backUpNow = useCallback(async () => {
+  // One job at a time (saving or restoring); anything else waits its turn.
+  const exclusive = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
+    const previous = running.current ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(job);
+    running.current = next;
+    next
+      .catch(() => {})
+      .finally(() => {
+        if (running.current === next) running.current = null;
+      });
+    return next;
+  }, []);
+
+  const save = useCallback(() => {
     if (!enabled) return;
-    if (running.current) return running.current;
-    lastAttempt.current = Date.now();
-    setIsSyncing(true);
-    running.current = (async () => {
-      try {
-        // Records first (small and quick), then photos.
-        await pushChanges(authedRequest);
-        setLastSyncedAt(await getLastSyncedAt());
-        setPhotoBackup(await pushMedia(authedRequest));
-      } finally {
-        running.current = null;
-        setIsSyncing(false);
-      }
-    })();
-    return running.current;
-  }, [enabled, authedRequest]);
-
-  const backUpQuietly = useCallback(() => {
-    backUpNow().catch((e) => console.warn('[Sync] backup failed (will retry later)', e));
-  }, [backUpNow]);
-
-  const restore = useCallback(async () => {
-    if (running.current) await running.current.catch(() => {});
-    setIsSyncing(true);
-    try {
-      const count = await restoreFromCloud(authedRequest);
-      await reloadSettings();
+    exclusive(async () => {
+      setSyncState('saving');
+      // Records first (small and quick), then photos.
+      await pushChanges(authedRequest);
       setLastSyncedAt(await getLastSyncedAt());
-      // Everything shows right away; photos fill in as they download.
-      restoreMedia(authedRequest)
-        .then((photos) => (photos > 0 ? reloadSettings() : undefined))
-        .catch((e) => console.warn('[Sync] photo restore failed (try Restore again later)', e));
-      return count;
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [authedRequest, reloadSettings]);
+      setPhotoBackup(await pushMedia(authedRequest));
+      setSyncState('saved');
+    }).catch((e) => {
+      console.warn('[Sync] couldn’t reach the server; retrying later', e);
+      setSyncState('offline');
+    });
+  }, [enabled, authedRequest, exclusive]);
+
+  const saveSoon = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(save, SAVE_DELAY_MS);
+  }, [save]);
+
+  const restore = useCallback(
+    () =>
+      exclusive(async () => {
+        const count = await restoreFromCloud(authedRequest);
+        await reloadSettings();
+        setLastSyncedAt(await getLastSyncedAt());
+        // Everything shows right away; photos fill in as they download.
+        restoreMedia(authedRequest)
+          .then((photos) => (photos > 0 ? reloadSettings() : undefined))
+          .catch((e) => console.warn('[Sync] photo restore failed (try Restore again later)', e));
+        return count;
+      }),
+    [authedRequest, reloadSettings, exclusive]
+  );
+
+  // Every change to the phone's data schedules a save.
+  useEffect(() => {
+    if (!enabled) return;
+    const subscription = addDatabaseChangeListener((event) => {
+      if (!IGNORED_TABLES.has(event.tableName)) saveSoon();
+    });
+    return () => {
+      subscription.remove();
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [enabled, saveSoon]);
+
+  // Offline (or the server was unreachable): keep trying every minute.
+  useEffect(() => {
+    if (!enabled || syncState !== 'offline') return;
+    const retry = setInterval(save, RETRY_DELAY_MS);
+    return () => clearInterval(retry);
+  }, [enabled, syncState, save]);
+
+  // Reopening the app catches up anything that couldn't be sent before.
+  useEffect(() => {
+    if (!enabled) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') saveSoon();
+    });
+    return () => subscription.remove();
+  }, [enabled, saveSoon]);
 
   // On sign-in: a phone with nothing on it offers to bring the account's
-  // backup back; otherwise it just backs up.
+  // data back; otherwise everything already on the phone is saved.
   const userId = user?.id;
   useEffect(() => {
     if (!enabled || !userId) return;
@@ -106,7 +147,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           if (!cancelled && rides + bikes > 0) {
             Alert.alert(
               'Restore your data?',
-              `Your account has a backup with ${bikes} bike${bikes === 1 ? '' : 's'} and ${rides} ride${rides === 1 ? '' : 's'}. Bring it onto this phone?`,
+              `Your account has ${bikes} bike${bikes === 1 ? '' : 's'} and ${rides} ride${rides === 1 ? '' : 's'} saved. Bring them onto this phone?`,
               [
                 { text: 'Not Now', style: 'cancel' },
                 {
@@ -123,27 +164,18 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch {
-        // Offline: fall through and try a backup later.
+        // Offline: the save below fails quietly and retries.
       }
-      if (!cancelled) backUpQuietly();
+      if (!cancelled) save();
     })();
     return () => {
       cancelled = true;
     };
-  }, [enabled, userId, authedRequest, restore, backUpQuietly]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'background') backUpQuietly();
-      if (state === 'active' && Date.now() - lastAttempt.current > FOREGROUND_THROTTLE_MS) backUpQuietly();
-    });
-    return () => subscription.remove();
-  }, [enabled, backUpQuietly]);
+  }, [enabled, userId, authedRequest, restore, save]);
 
   const value = useMemo<SyncContextValue>(
-    () => ({ isSyncing, lastSyncedAt, photoBackup, backUpNow, restore }),
-    [isSyncing, lastSyncedAt, photoBackup, backUpNow, restore]
+    () => ({ syncState, lastSyncedAt, photoBackup, restore }),
+    [syncState, lastSyncedAt, photoBackup, restore]
   );
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;

@@ -7,7 +7,8 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 // lives in src/features/ride-tracking/rideLocalDb.ts.
 export function getDb() {
   if (!dbPromise) {
-    dbPromise = SQLite.openDatabaseAsync('bikeapp.db').then(async (db) => {
+    // Change events let saved data go to the cloud automatically (SyncContext).
+    dbPromise = SQLite.openDatabaseAsync('bikeapp.db', { enableChangeListener: true }).then(async (db) => {
       await db.execAsync(`
         PRAGMA journal_mode = WAL;
 
