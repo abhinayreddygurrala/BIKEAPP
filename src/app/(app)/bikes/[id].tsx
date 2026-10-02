@@ -2,7 +2,6 @@ import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, View, type AlertButton } from 'react-native';
 import { Image } from 'expo-image';
-import type { ImagePickerOptions } from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import Animated, {
   useAnimatedReaction,
@@ -208,22 +207,28 @@ export default function BikeDetailScreen() {
       return;
     }
 
-    const permission =
-      source === 'camera'
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setPhotoError(
-        source === 'camera'
-          ? 'Camera access is required to take a bike photo.'
-          : 'Photo library access is required to set a bike photo.'
-      );
-      return;
+    // Only the camera needs permission. The system photo picker runs outside
+    // the app and hands over just the photo that's chosen.
+    if (source === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setPhotoError('Camera access is required to take a bike photo.');
+        return;
+      }
     }
 
-    const options: ImagePickerOptions = { mediaTypes: ['images'], allowsEditing: true, aspect: [4, 3], quality: 0.8 };
     const result =
-      source === 'camera' ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
+      source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [4, 3], quality: 0.8 })
+        : // No crop step for the library: allowsEditing makes iOS fall back to
+          // its old photo picker, which takes about a second to open. Full
+          // quality in the photo's own format lets the picker hand over the
+          // original file without re-encoding it — savePhoto shrinks it anyway.
+          await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+            preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+          });
     if (result.canceled || !result.assets[0]) return;
 
     const pickedUri = result.assets[0].uri;

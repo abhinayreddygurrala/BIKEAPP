@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Alert, Image, StyleSheet, View, type AlertButton } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { ImagePickerOptions } from 'expo-image-picker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -44,29 +43,28 @@ export default function ProfilePictureScreen() {
       return;
     }
 
-    const permission =
-      source === 'camera'
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setError(
-        source === 'camera'
-          ? 'Camera access is required to take a profile picture.'
-          : 'Photo library access is required to set a profile picture.'
-      );
-      return;
+    // Only the camera needs permission. The system photo picker runs outside
+    // the app and hands over just the photo that's chosen.
+    if (source === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setError('Camera access is required to take a profile picture.');
+        return;
+      }
     }
 
-    const options: ImagePickerOptions = {
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    };
     const result =
       source === 'camera'
-        ? await ImagePicker.launchCameraAsync(options)
-        : await ImagePicker.launchImageLibraryAsync(options);
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 })
+        : // No crop step for the library: allowsEditing makes iOS fall back to
+          // its old photo picker, which takes about a second to open. The round
+          // avatar shows the middle of the photo instead. Full quality in the
+          // photo's own format skips a re-encode — savePhoto shrinks it anyway.
+          await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+            preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+          });
     if (result.canceled || !result.assets[0]) return;
 
     const pickedUri = result.assets[0].uri;

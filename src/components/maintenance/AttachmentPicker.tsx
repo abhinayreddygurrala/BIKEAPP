@@ -66,8 +66,9 @@ export function AttachmentPicker({ attachments, onPick, onRemove, disabled }: At
 
   const pickFromLibrary = async () => {
     if (!ImagePicker) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
+    // No permission check: the system photo picker runs outside the app and
+    // hands over just the photos that are chosen, so it works (and opens
+    // sooner) even if full photo library access was never granted.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.8,
