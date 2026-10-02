@@ -1,0 +1,13 @@
+{
+  "name": "odomap-launch-intro",
+  "private": true,
+  "description": "Renders assets/video/launch-intro.mp4 (the 3D launch intro). Not part of the app bundle.",
+  "scripts": {
+    "stills": "node render.js stills 0 0.9 1.3 2 3",
+    "frames": "node render.js video"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.43.1",
+    "three": "0.180.0"
+  }
+}

@@ -1,0 +1,448 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>html,body{margin:0;background:#0B0B0D;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">
+{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w') || 1080), H = +(q.get('h') || 2346);
+// Background input colour, tuned so the encoded frame matches the splash (#0B0B0D).
+const BG_HEX = q.get('bg') || '#0B0B0D';
+
+// ---------- helpers ----------
+const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const easeOutCubic = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+const easeInOutCubic = (x) => { x = clamp(x, 0, 1); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+
+// ---------- renderer ----------
+const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// ACES (as three.js applies it) crushes darks; find the input that comes out as the splash colour.
+function acesPreimage(hex) {
+  const target = new THREE.Color(hex); // linear
+  const fit = (v) => (v * (v + 0.0245786) - 0.000090537) / (v * (0.983729 * v + 0.432951) + 0.238081);
+  const solve = (L) => { let lo = 0, hi = 1; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (fit(m) < L) lo = m; else hi = m; } return 0.6 * lo; };
+  return new THREE.Color(solve(target.r), solve(target.g), solve(target.b));
+}
+const BG = acesPreimage(BG_HEX);
+const scene = new THREE.Scene();
+scene.background = BG.clone();
+const FOG_COLOR = new THREE.Color('#100c0b');
+scene.fog = new THREE.FogExp2(BG.clone(), 0.011);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+
+const camera = new THREE.PerspectiveCamera(16, W / H, 0.1, 3000);
+
+// ---------- materials ----------
+const paint = new THREE.MeshPhysicalMaterial({ color: '#FF5A1F', metalness: 0.2, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06 });
+const paintDark = new THREE.MeshPhysicalMaterial({ color: '#E8401A', metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.1 });
+const frameMat = new THREE.MeshPhysicalMaterial({ color: '#E8401A', metalness: 0.3, roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+const rubber = new THREE.MeshStandardMaterial({ color: '#0f0f11', metalness: 0, roughness: 0.82 });
+const chrome = new THREE.MeshStandardMaterial({ color: '#e6e6ea', metalness: 1, roughness: 0.1 });
+const alloy = new THREE.MeshStandardMaterial({ color: '#4a4a52', metalness: 0.9, roughness: 0.3 });
+const engineMat = new THREE.MeshStandardMaterial({ color: '#2a2a30', metalness: 0.85, roughness: 0.38 });
+const leather = new THREE.MeshStandardMaterial({ color: '#1c1714', metalness: 0, roughness: 0.7 });
+const lampMat = new THREE.MeshStandardMaterial({ color: '#fff4e0', emissive: new THREE.Color('#fff1d6'), emissiveIntensity: 0 });
+const tailMat = new THREE.MeshStandardMaterial({ color: '#330800', emissive: new THREE.Color('#ff2a1a'), emissiveIntensity: 0 });
+
+// ---------- bike (body coordinates: x forward, y up, z = bike's right; origin on the ground midway between the tyres) ----------
+const WB = 1.45, R = 0.36, TYRE = 0.085;
+function shadowed(o) { o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); return o; }
+function rod(a, b, radius, mat, seg = 16) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const len = A.distanceTo(B);
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, seg), mat);
+  m.position.copy(A).add(B).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize());
+  return m;
+}
+function curveTube(points, radius, mat) {
+  const c = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
+  return new THREE.Mesh(new THREE.TubeGeometry(c, 48, radius, 14, false), mat);
+}
+function makeWheel() {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.TorusGeometry(R - TYRE, TYRE, 24, 80), rubber));
+  g.add(new THREE.Mesh(new THREE.TorusGeometry(R - TYRE - 0.03, 0.02, 12, 64), chrome));
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.17, 24).rotateX(Math.PI / 2), chrome));
+  const spokeLen = R - TYRE - 0.08;
+  for (let i = 0; i < 12; i++) {
+    const s = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, spokeLen, 6), alloy);
+    s.geometry.translate(0, spokeLen / 2 + 0.05, 0);
+    s.rotation.z = (i / 12) * Math.PI * 2;
+    s.position.z = (i % 2 ? 1 : -1) * 0.025;
+    g.add(s);
+  }
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.008, 48).rotateX(Math.PI / 2), alloy);
+  disc.position.z = -0.075;
+  g.add(disc);
+  return shadowed(g);
+}
+
+const body = new THREE.Group();
+const rearWheel = makeWheel();
+rearWheel.position.set(-WB / 2, R, 0);
+const frontWheel = makeWheel();
+frontWheel.position.set(WB / 2, R, 0);
+body.add(rearWheel, frontWheel);
+
+const HEAD = [WB / 2 - 0.33, 1.06, 0]; // steering head
+// forks
+for (const z of [-0.1, 0.1]) {
+  body.add(rod([WB / 2, R, z], [HEAD[0] + 0.02, HEAD[1] - 0.02, z], 0.026, chrome));
+  body.add(rod([WB / 2 + 0.005, R + 0.06, z], [WB / 2 - 0.07, R + 0.32, z], 0.034, frameMat));
+}
+body.add(rod([HEAD[0] - 0.02, HEAD[1] - 0.1, 0], [HEAD[0] + 0.03, HEAD[1] + 0.06, 0], 0.045, frameMat));
+// headlight
+const lampHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.1, 0.12, 40).rotateZ(Math.PI / 2), chrome);
+lampHousing.position.set(HEAD[0] + 0.16, HEAD[1] - 0.04, 0);
+body.add(lampHousing);
+const lens = new THREE.Mesh(new THREE.CircleGeometry(0.1, 40).rotateY(Math.PI / 2), lampMat);
+lens.position.set(HEAD[0] + 0.222, HEAD[1] - 0.04, 0);
+body.add(lens);
+// handlebar
+body.add(rod([HEAD[0] - 0.02, HEAD[1] + 0.05, -0.08], [HEAD[0] - 0.06, HEAD[1] + 0.17, -0.12], 0.016, chrome));
+body.add(rod([HEAD[0] - 0.02, HEAD[1] + 0.05, 0.08], [HEAD[0] - 0.06, HEAD[1] + 0.17, 0.12], 0.016, chrome));
+body.add(curveTube([[HEAD[0] - 0.12, HEAD[1] + 0.2, -0.4], [HEAD[0] - 0.05, HEAD[1] + 0.17, -0.15], [HEAD[0] - 0.05, HEAD[1] + 0.17, 0.15], [HEAD[0] - 0.12, HEAD[1] + 0.2, 0.4]], 0.016, chrome));
+for (const z of [-0.36, 0.36]) {
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.11, 16).rotateX(Math.PI / 2), rubber);
+  grip.position.set(HEAD[0] - 0.115, HEAD[1] + 0.198, z * 1.03);
+  body.add(grip);
+}
+// tank
+const tank = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 40), paint);
+tank.scale.set(0.36, 0.165, 0.2);
+tank.position.set(0.08, 0.99, 0);
+tank.rotation.z = 0.1;
+body.add(tank);
+const badge = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), chrome);
+badge.scale.set(0.07, 0.03, 0.012);
+badge.position.set(0.12, 0.98, 0.196);
+body.add(badge);
+// seat
+const seat = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.46, 8, 24).rotateZ(Math.PI / 2), leather);
+seat.scale.set(1, 0.85, 1.55);
+seat.position.set(-0.42, 0.95, 0);
+body.add(seat);
+// tail + rear fender
+const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.16, 6, 16).rotateZ(Math.PI / 2 - 0.25), paintDark);
+tail.position.set(-0.74, 0.9, 0);
+body.add(tail);
+const tailLight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.12), tailMat);
+tailLight.position.set(-0.84, 0.88, 0);
+body.add(tailLight);
+const fender = new THREE.Mesh(new THREE.TorusGeometry(R + 0.05, 0.022, 8, 40, 1.5), frameMat);
+fender.rotation.z = 1.2;
+fender.position.copy(rearWheel.position);
+body.add(fender);
+const frontFender = new THREE.Mesh(new THREE.TorusGeometry(R + 0.045, 0.03, 8, 40, 1.4), paintDark);
+frontFender.rotation.z = 0.35;
+frontFender.position.copy(frontWheel.position);
+body.add(frontFender);
+// frame
+body.add(rod([HEAD[0], HEAD[1] - 0.04, 0], [-0.62, 0.86, 0], 0.03, frameMat));
+body.add(rod([HEAD[0] - 0.02, HEAD[1] - 0.08, 0], [0.18, 0.3, 0], 0.03, frameMat));
+body.add(rod([0.18, 0.3, 0], [-0.3, 0.3, 0], 0.03, frameMat));
+body.add(rod([-0.3, 0.3, 0], [-0.36, 0.88, 0], 0.03, frameMat));
+for (const z of [-0.11, 0.11]) {
+  body.add(rod([-0.24, 0.4, z], [-WB / 2, R, z], 0.028, frameMat));
+  body.add(rod([-0.5, 0.42, z], [-0.58, 0.86, z], 0.024, chrome));
+  body.add(rod([-0.5, 0.42, z], [-0.58, 0.86, z], 0.034, paintDark).translateY(0.0));
+}
+// engine
+const block = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.3, 0.26), engineMat);
+block.position.set(-0.03, 0.48, 0);
+body.add(block);
+for (let i = 0; i < 5; i++) {
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.3 - i * 0.02, 0.014, 0.3), alloy);
+  fin.position.set(0.05, 0.66 + i * 0.03, 0);
+  fin.rotation.z = -0.25;
+  body.add(fin);
+}
+const cover = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.3, 40).rotateX(Math.PI / 2), chrome);
+cover.position.set(-0.08, 0.42, 0);
+body.add(cover);
+// exhaust (right side)
+body.add(curveTube([[0.14, 0.62, 0.1], [0.27, 0.42, 0.15], [0.12, 0.24, 0.19], [-0.25, 0.3, 0.21], [-0.42, 0.36, 0.21]], 0.03, chrome));
+body.add(rod([-0.4, 0.35, 0.21], [-0.86, 0.5, 0.21], 0.05, chrome, 28));
+shadowed(body);
+
+// headlight beam
+const beam = new THREE.SpotLight('#fff1d6', 0, 70, 0.42, 0.55, 1.6);
+beam.position.set(HEAD[0] + 0.24, HEAD[1] - 0.04, 0);
+const beamTarget = new THREE.Object3D();
+beamTarget.position.set(14, -1.2, 0);
+body.add(beam, beamTarget);
+beam.target = beamTarget;
+const tailGlow = new THREE.PointLight('#ff2a1a', 0, 3, 2);
+tailGlow.position.set(-0.9, 0.88, 0);
+body.add(tailGlow);
+
+// rig: position/heading → lean → wheelie pivot (rear tyre) → body
+const bikeRoot = new THREE.Group();
+const leanG = new THREE.Group();
+const pivot = new THREE.Group();
+pivot.position.set(-WB / 2, 0, 0);
+body.position.set(WB / 2, 0, 0);
+pivot.add(body);
+leanG.add(pivot);
+bikeRoot.add(leanG);
+scene.add(bikeRoot);
+
+// ---------- road ----------
+// Heading psi(s): straight, then S-bends that grow in. Forward = (cos psi, 0, -sin psi); right = (sin psi, 0, cos psi).
+const BEND_FROM = 9, RAMP = 30, BEND_L = 62, BEND_A = 0.78;
+const psiAt = (s) => (s <= BEND_FROM ? 0 : BEND_A * smooth(0, RAMP, s - BEND_FROM) * Math.sin((2 * Math.PI * (s - BEND_FROM)) / BEND_L));
+const DS = 0.25, S_MIN = -120, S_MAX = 420;
+const NS = Math.round((S_MAX - S_MIN) / DS) + 1;
+const RX = new Float64Array(NS), RZ = new Float64Array(NS), RP = new Float64Array(NS);
+{
+  const i0 = Math.round(-S_MIN / DS);
+  RX[i0] = 0; RZ[i0] = 0; RP[i0] = 0;
+  for (let i = i0 + 1; i < NS; i++) {
+    const s = S_MIN + i * DS, p = psiAt(s - DS / 2);
+    RX[i] = RX[i - 1] + Math.cos(p) * DS; RZ[i] = RZ[i - 1] - Math.sin(p) * DS; RP[i] = psiAt(s);
+  }
+  for (let i = i0 - 1; i >= 0; i--) { RX[i] = RX[i + 1] - DS; RZ[i] = 0; RP[i] = 0; }
+}
+function roadAt(s) {
+  const f = clamp((s - S_MIN) / DS, 0, NS - 1.001), i = Math.floor(f), u = f - i;
+  return { x: RX[i] + (RX[i + 1] - RX[i]) * u, z: RZ[i] + (RZ[i + 1] - RZ[i]) * u, psi: RP[i] + (RP[i + 1] - RP[i]) * u };
+}
+const ROAD_W = 7;
+function strip(offA, offB, s0, s1, mat, y = 0, dashOn = 0, dashOff = 0) {
+  const pos = [], idx = [];
+  const add = (sa, sb) => {
+    const base = pos.length / 3;
+    for (let s = sa; s <= sb + 1e-6; s += DS) {
+      const r = roadAt(s), sx = Math.sin(r.psi), cz = Math.cos(r.psi);
+      pos.push(r.x + sx * offA, y, r.z + cz * offA, r.x + sx * offB, y, r.z + cz * offB);
+    }
+    const n = pos.length / 3 - base;
+    for (let k = 0; k < n / 2 - 1; k++) { const a = base + 2 * k; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  };
+  if (dashOn) { for (let s = s0; s < s1; s += dashOn + dashOff) add(s, Math.min(s + dashOn, s1)); } else add(s0, s1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat);
+  m.receiveShadow = true;
+  return m;
+}
+const ASPHALT = new THREE.Color('#1e1e23');
+const asphalt = new THREE.MeshStandardMaterial({ color: ASPHALT.clone(), roughness: 0.85, metalness: 0, envMapIntensity: 0.25, transparent: true });
+const LINE = new THREE.Color('#c4c4ca');
+const lineMat = new THREE.MeshStandardMaterial({ color: LINE.clone(), roughness: 0.5, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.03, transparent: true });
+const edgeMat = new THREE.MeshStandardMaterial({ color: LINE.clone().multiplyScalar(0.7), roughness: 0.5, transparent: true });
+scene.add(strip(-ROAD_W / 2, ROAD_W / 2, S_MIN, S_MAX, asphalt, 0));
+scene.add(strip(-0.07, 0.07, S_MIN + 1, S_MAX, lineMat, 0.004, 3, 4.5));
+scene.add(strip(-ROAD_W / 2 + 0.25, -ROAD_W / 2 + 0.37, S_MIN, S_MAX, edgeMat, 0.004));
+scene.add(strip(ROAD_W / 2 - 0.37, ROAD_W / 2 - 0.25, S_MIN, S_MAX, edgeMat, 0.004));
+const GROUND = new THREE.Color('#09090b');
+const groundMat = new THREE.MeshStandardMaterial({ color: GROUND.clone(), roughness: 1, envMapIntensity: 0, transparent: true });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000).rotateX(-Math.PI / 2), groundMat);
+ground.position.y = -0.02;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ---------- sky, horizon glow and mountains ----------
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: {
+    bg: { value: BG.clone() }, top: { value: new THREE.Color('#0d0d12') }, horizon: { value: new THREE.Color('#2a140c') },
+    glow: { value: new THREE.Color('#ff6a2a') }, env: { value: 0 },
+  },
+  vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: `uniform vec3 bg, top, horizon, glow; uniform float env; varying vec3 vDir;
+    float rand(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233))) * 43758.5453); }
+    void main(){ vec3 d = normalize(vDir); float h = d.y;
+      vec3 col = mix(horizon, top, smoothstep(-0.02, 0.32, h));
+      col = mix(col, top * 0.6, smoothstep(-0.005, -0.08, h)); // below the horizon is ground, so keep it dark
+      float ahead = 0.35 + 0.65 * smoothstep(-0.4, 1.0, d.x);
+      col += glow * exp(-abs(h - 0.01) * 22.0) * 0.55 * ahead;
+      col = mix(bg, col, env);
+      col += (rand(gl_FragCoord.xy) - 0.5) * 0.0025;
+      gl_FragColor = vec4(col, 1.0); }`,
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1500, 64, 32), skyMat));
+function ridge(radius, base, amp, seed, color) {
+  const pos = [], idx = [], N = 360;
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const h = base + amp * (0.55 * Math.sin(a * 3 + seed) + 0.3 * Math.sin(a * 7 + seed * 2) + 0.15 * Math.sin(a * 17 + seed * 3) + 0.4);
+    pos.push(Math.cos(a) * radius, -2, Math.sin(a) * radius, Math.cos(a) * radius, h, Math.sin(a) * radius);
+    if (i < N) { const k = 2 * i; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  const m = new THREE.MeshBasicMaterial({ color: BG.clone(), side: THREE.DoubleSide, fog: false });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.userData.color = new THREE.Color(color);
+  return mesh;
+}
+const ridges = [ridge(900, 40, 70, 1.3, '#120f10'), ridge(600, 18, 40, 4.1, '#0e0c0d')];
+scene.add(...ridges);
+
+// ---------- lights ----------
+const hemi = new THREE.HemisphereLight('#4a5266', '#0b0b0d', 0);
+scene.add(hemi);
+const key = new THREE.DirectionalLight('#d9e0ff', 1.5);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -4; key.shadow.camera.right = 4; key.shadow.camera.top = 4; key.shadow.camera.bottom = -4;
+key.shadow.camera.near = 1; key.shadow.camera.far = 40;
+key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
+scene.add(key, key.target);
+// Rims are narrow spots on the bike, so they don't flood the road.
+const rim = new THREE.SpotLight('#9db8ff', 0, 0, 0.32, 0.8, 2);
+scene.add(rim, rim.target);
+const warmRim = new THREE.SpotLight('#ff8a4a', 0, 0, 0.28, 0.8, 2);
+scene.add(warmRim, warmRim.target);
+
+// ---------- post ----------
+const target = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, samples: 4 });
+const composer = new EffectComposer(renderer, target);
+composer.setPixelRatio(1);
+composer.setSize(W, H);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.5, 0.55, 0.88);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// ---------- choreography ----------
+const T_GO = 0.45, ACC = 15, VMAX = 22;
+function rideS(t) {
+  if (t <= T_GO) return 0;
+  const tau = t - T_GO, tv = VMAX / ACC;
+  return tau < tv ? 0.5 * ACC * tau * tau : 0.5 * ACC * tv * tv + VMAX * (tau - tv);
+}
+const speed = (t) => (t <= T_GO ? 0 : Math.min(ACC * (t - T_GO), VMAX));
+function wheelieDeg(t) {
+  const up0 = T_GO, up1 = T_GO + 0.27, down0 = T_GO + 0.5, down1 = T_GO + 0.76;
+  if (t < up0) return 0;
+  if (t < up1) return 27 * easeOutCubic((t - up0) / (up1 - up0));
+  if (t < down0) return 27 + 1.5 * Math.sin(((t - up1) / (down0 - up1)) * Math.PI);
+  if (t < down1) return 27 * (1 - easeInOutCubic((t - down0) / (down1 - down0)));
+  const b = t - down1;
+  return b < 0.22 ? -1.8 * Math.sin((b / 0.22) * Math.PI) : 0;
+}
+// Camera keys, relative to the bike: az 0 = in front, 90 = its right side, 180 = behind.
+const KEYS = [
+  { t: 0.0, az: 90, el: 0, dist: 101, fov: 16, look: 0, h: 0.71 },
+  { t: 0.12, az: 90, el: 0, dist: 101, fov: 16, look: 0, h: 0.71 },
+  { t: 0.95, az: 36, el: 8, dist: 5.8, fov: 50, look: 0.3, h: 0.7 },
+  { t: 1.4, az: 105, el: 10, dist: 7.8, fov: 52, look: 0.4, h: 0.75 },
+  { t: 1.85, az: 172, el: 12, dist: 7.0, fov: 56, look: 2.2, h: 0.85 },
+  { t: 2.45, az: 180, el: 11, dist: 7.6, fov: 56, look: 6, h: 0.9 },
+  { t: 3.1, az: 180, el: 10, dist: 15, fov: 54, look: 6, h: 0.9 },
+];
+function camAt(t) {
+  const k = KEYS;
+  if (t <= k[0].t) return { ...k[0] };
+  if (t >= k[k.length - 1].t) return { ...k[k.length - 1] };
+  let i = 0;
+  while (t > k[i + 1].t) i++;
+  const a = k[i], b = k[i + 1], dt = b.t - a.t, u = (t - a.t) / dt;
+  const h00 = 2 * u ** 3 - 3 * u ** 2 + 1, h10 = u ** 3 - 2 * u ** 2 + u, h01 = -2 * u ** 3 + 3 * u ** 2, h11 = u ** 3 - u ** 2;
+  const out = {};
+  for (const p of ['az', 'el', 'dist', 'fov', 'look', 'h']) {
+    const val = (key) => (p === 'dist' ? Math.log(key[p]) : key[p]);
+    const tan = (j) => (j <= 0 || j >= k.length - 1 ? 0 : ((val(k[j + 1]) - val(k[j - 1])) / (k[j + 1].t - k[j - 1].t)) * dt);
+    // hold still at the first move and ease into the last key
+    const m0 = i === 1 ? 0 : tan(i), m1 = tan(i + 1);
+    const v = h00 * val(a) + h10 * m0 + h01 * val(b) + h11 * m1;
+    out[p] = p === 'dist' ? Math.exp(v) : v;
+  }
+  return out;
+}
+const smoothPsi = (s) => { let acc = 0; for (let j = 0; j < 12; j++) acc += roadAt(s - j * 0.9).psi; return acc / 12; };
+const LANE = 1.4;
+
+window.renderAt = function (t, quality = 0.95) {
+  const env = smooth(0.06, 0.5, t);
+  const lamp = smooth(0.2, 0.32, t);
+  // environment fade-in
+  skyMat.uniforms.env.value = env;
+  scene.fog.color.copy(BG).lerp(FOG_COLOR, env);
+  asphalt.opacity = env;
+  lineMat.opacity = env;
+  edgeMat.opacity = env;
+  groundMat.opacity = env;
+  for (const r of ridges) r.material.color.copy(BG).lerp(r.userData.color, env);
+  hemi.intensity = 0.14 * env;
+  rim.intensity = 160 * env;
+  warmRim.intensity = 90 * env;
+  beam.intensity = 260 * lamp;
+  lampMat.emissiveIntensity = 0.3 + 5 * lamp;
+  tailMat.emissiveIntensity = 0.25 + 0.9 * lamp;
+  tailGlow.intensity = 0.45 * lamp;
+
+  // bike pose
+  const s = rideS(t), v = speed(t);
+  const r = roadAt(s);
+  const fwd = new THREE.Vector3(Math.cos(r.psi), 0, -Math.sin(r.psi));
+  const right = new THREE.Vector3(Math.sin(r.psi), 0, Math.cos(r.psi));
+  bikeRoot.position.set(r.x, 0, r.z).addScaledVector(right, LANE);
+  bikeRoot.rotation.y = r.psi;
+  const kappa = (roadAt(s + 2.5).psi - roadAt(s + 0.5).psi) / 2.0;
+  leanG.rotation.x = clamp(-kappa * 3.2, -0.72, 0.72) * smooth(2, 9, v);
+  pivot.rotation.z = THREE.MathUtils.degToRad(wheelieDeg(t));
+  rearWheel.rotation.z = -s / R;
+  frontWheel.rotation.z = -s / R * (1 - 0.35 * smooth(0, 10, wheelieDeg(t)));
+
+  // lights that follow the bike
+  const bp = bikeRoot.position;
+  key.position.set(bp.x + 5, 9, bp.z + 7);
+  key.target.position.copy(bp);
+  rim.position.copy(bp).addScaledVector(fwd, -8).add(new THREE.Vector3(0, 5, -3));
+  rim.target.position.copy(bp);
+  warmRim.position.copy(bp).addScaledVector(fwd, 10).add(new THREE.Vector3(0, 2.5, 0));
+  warmRim.target.position.copy(bp);
+
+  // camera
+  const c = camAt(t);
+  const cpsi = smoothPsi(s);
+  const cf = new THREE.Vector3(Math.cos(cpsi), 0, -Math.sin(cpsi));
+  const cr = new THREE.Vector3(Math.sin(cpsi), 0, Math.cos(cpsi));
+  const az = THREE.MathUtils.degToRad(c.az), el = THREE.MathUtils.degToRad(c.el);
+  const anchor = bp.clone().add(new THREE.Vector3(0, c.h, 0));
+  const tgt = anchor.clone().addScaledVector(cf, c.look);
+  camera.position.copy(anchor)
+    .addScaledVector(cf, c.dist * Math.cos(el) * Math.cos(az))
+    .addScaledVector(cr, c.dist * Math.cos(el) * Math.sin(az))
+    .add(new THREE.Vector3(0, c.dist * Math.sin(el), 0));
+  camera.fov = c.fov;
+  camera.updateProjectionMatrix();
+  camera.lookAt(tgt);
+
+  composer.render();
+  return renderer.domElement.toDataURL(quality === 'png' ? 'image/png' : 'image/jpeg', quality === 'png' ? undefined : quality);
+};
+window.sceneReady = true;
+</script>
+</body>
+</html>
