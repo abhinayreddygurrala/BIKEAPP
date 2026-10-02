@@ -2,12 +2,16 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, type ReactNode } from 'react';
+import { ActivityIndicator, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { Spacing } from '@/constants/theme';
 import { LaunchIntro } from '@/components/ui/LaunchIntro';
 import { AuthProvider, useAuth } from '@/features/auth/AuthContext';
 import { SettingsProvider, useSettings } from '@/features/settings/SettingsContext';
-import { SyncProvider } from '@/features/sync/SyncContext';
+import { SyncProvider, useSync } from '@/features/sync/SyncContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 // Side-effect import: registers the background location task at app
@@ -43,18 +47,25 @@ function AppThemeProvider({ children }: { children: ReactNode }) {
 
 function RootNavigator() {
   const { isLoading } = useSettings();
-  const { status, hasSkippedSignIn } = useAuth();
+  const { status } = useAuth();
+  const { restoringAccount } = useSync();
+  const theme = useTheme();
   const ready = !isLoading && status !== 'loading';
 
-  // Opening sign-in screen until someone signs in or taps "Skip for now";
-  // the switch happens automatically when either changes.
-  const showWelcome = status === 'signedOut' && !hasSkippedSignIn;
+  // Odomap needs an account: the sign-in screen until someone signs in,
+  // switching automatically when that changes.
+  const showWelcome = status === 'signedOut';
 
   // The launch intro takes over from the native splash screen (and hides
   // it), then reveals the first screen once it's ready.
   return (
     <LaunchIntro ready={ready}>
-      {ready ? (
+      {ready && restoringAccount ? (
+        <ThemedView style={styles.restoring}>
+          <ActivityIndicator color={theme.text} />
+          <ThemedText type="default">Bringing back your rides…</ThemedText>
+        </ThemedView>
+      ) : ready ? (
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Protected guard={showWelcome}>
             <Stack.Screen name="welcome" />
@@ -90,3 +101,12 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  restoring: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.three,
+  },
+});

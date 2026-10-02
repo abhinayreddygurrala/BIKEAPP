@@ -96,3 +96,12 @@ export async function syncDueNotifications(dueItems: DueItem[], bikeName: string
 
   if (changed) await saveNotifiedKeys(notified);
 }
+
+/** Cancels every maintenance reminder and forgets which ones were sent (used when an account leaves this phone). */
+export async function clearMaintenanceNotifications(): Promise<void> {
+  if (Notifications) {
+    await Notifications.cancelAllScheduledNotificationsAsync().catch(() => {});
+    await Notifications.dismissAllNotificationsAsync().catch(() => {});
+  }
+  await AsyncStorage.removeItem(NOTIFIED_KEY).catch(() => {});
+}

@@ -26,23 +26,20 @@ type AuthContextValue = {
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
   checkUsername: (username: string) => Promise<UsernameCheck>;
-  /** True once someone tapped "Skip for now" on the opening sign-in screen. */
-  hasSkippedSignIn: boolean;
-  skipSignIn: () => Promise<void>;
   /** A request to the Odomap server as the signed-in user (signs out on a 401). */
   authedRequest: <T>(path: string, options?: { method?: 'GET' | 'POST' | 'DELETE'; body?: unknown }) => Promise<T>;
 };
 
 const TOKEN_KEY = 'odomap.session.token';
 const USER_KEY = 'odomap.session.user';
-const SKIPPED_KEY = 'odomap.signin.skipped';
+// Left by the old "Skip for now" option; only ever deleted now.
+const LEGACY_SKIPPED_KEY = 'odomap.signin.skipped';
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<AccountUser | null>(null);
-  const [hasSkippedSignIn, setHasSkippedSignIn] = useState(false);
   const tokenRef = useRef<string | null>(null);
 
   const saveSession = useCallback(async (token: string, nextUser: AccountUser) => {
@@ -52,15 +49,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await Promise.all([setSecureItem(TOKEN_KEY, token), setSecureItem(USER_KEY, JSON.stringify(nextUser))]);
   }, []);
 
-  // Signing out (or deleting the account, or a session expiring) also forgets
-  // an earlier "Skip for now", so the opening sign-in screen comes back —
-  // the usual meaning of signing out.
+  // Signing out (or deleting the account, or a session expiring) brings the
+  // opening sign-in screen back: Odomap needs an account to be used.
   const clearSession = useCallback(async () => {
     tokenRef.current = null;
     setUser(null);
-    setHasSkippedSignIn(false);
     setStatus('signedOut');
-    await Promise.all([deleteSecureItem(TOKEN_KEY), deleteSecureItem(USER_KEY), deleteSecureItem(SKIPPED_KEY)]);
+    await Promise.all([deleteSecureItem(TOKEN_KEY), deleteSecureItem(USER_KEY)]);
   }, []);
 
   // Anything that needs the login token goes through here, so an expired or
@@ -79,13 +74,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      const [token, cached, skipped] = await Promise.all([
-        getSecureItem(TOKEN_KEY),
-        getSecureItem(USER_KEY),
-        getSecureItem(SKIPPED_KEY),
-      ]);
+      void deleteSecureItem(LEGACY_SKIPPED_KEY);
+      const [token, cached] = await Promise.all([getSecureItem(TOKEN_KEY), getSecureItem(USER_KEY)]);
       if (!token) {
-        setHasSkippedSignIn(skipped === 'true');
         setStatus('signedOut');
         return;
       }
@@ -152,14 +143,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       checkUsername: (username) =>
         apiRequest<UsernameCheck>(`/auth/username-available?username=${encodeURIComponent(username)}`),
-      hasSkippedSignIn,
       authedRequest,
-      skipSignIn: async () => {
-        setHasSkippedSignIn(true);
-        await setSecureItem(SKIPPED_KEY, 'true');
-      },
     }),
-    [status, user, hasSkippedSignIn, saveSession, clearSession, authedRequest]
+    [status, user, saveSession, clearSession, authedRequest]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

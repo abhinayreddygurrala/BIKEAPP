@@ -143,24 +143,6 @@ export default function AppLayout() {
         options={{ headerShown: true, title: 'Delete Account', headerBackTitle: 'Settings' }}
       />
       <Stack.Screen
-        name="auth/sign-in"
-        options={{
-          presentation: 'modal',
-          headerShown: true,
-          title: 'Sign In',
-          headerLeft: CancelHeaderButton,
-        }}
-      />
-      <Stack.Screen
-        name="auth/sign-up"
-        options={{
-          presentation: 'modal',
-          headerShown: true,
-          title: 'Create Account',
-          headerLeft: CancelHeaderButton,
-        }}
-      />
-      <Stack.Screen
         name="settings/profile-picture"
         options={{ headerShown: true, title: 'Profile Picture', headerBackTitle: 'Settings' }}
       />

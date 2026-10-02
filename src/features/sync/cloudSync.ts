@@ -87,6 +87,14 @@ async function saveState(db: SQLiteDatabase, upserts: (RecordRef & { hash: strin
  * phone starts it fresh, so that account gets a full copy (and nothing from
  * the other account's history is deleted from it).
  */
+/** The account this phone's data was last saved to, or null if it never was. */
+export async function getSyncAccount(): Promise<string | null> {
+  const db = await getDb();
+  await ensureSyncTables(db);
+  const row = await db.getFirstAsync<{ value: string }>("SELECT value FROM sync_meta WHERE key = 'user_id'");
+  return row?.value ?? null;
+}
+
 export async function switchSyncAccount(userId: string): Promise<void> {
   const db = await getDb();
   await ensureSyncTables(db);

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -17,11 +17,9 @@ export type SignInFormProps = {
   onDone: () => void;
   /** Switches to the create-account form. */
   onSwitch: () => void;
-  /** Extra content under the form (the opening screen's "Skip for now"). */
-  footer?: ReactNode;
 };
 
-export function SignInForm({ onDone, onSwitch, footer }: SignInFormProps) {
+export function SignInForm({ onDone, onSwitch }: SignInFormProps) {
   const { signIn } = useAuth();
   const theme = useTheme();
   const [identifier, setIdentifier] = useState('');
@@ -101,7 +99,6 @@ export function SignInForm({ onDone, onSwitch, footer }: SignInFormProps) {
                 </ThemedText>
               </Pressable>
             </View>
-            {footer}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

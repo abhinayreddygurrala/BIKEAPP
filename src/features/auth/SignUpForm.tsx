@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -25,11 +25,9 @@ export type SignUpFormProps = {
   onDone: () => void;
   /** Switches to the sign-in form. */
   onSwitch: () => void;
-  /** Extra content under the form (the opening screen's "Skip for now"). */
-  footer?: ReactNode;
 };
 
-export function SignUpForm({ onDone, onSwitch, footer }: SignUpFormProps) {
+export function SignUpForm({ onDone, onSwitch }: SignUpFormProps) {
   const { signUp, checkUsername } = useAuth();
   const theme = useTheme();
   const [username, setUsername] = useState('');
@@ -212,7 +210,6 @@ export function SignUpForm({ onDone, onSwitch, footer }: SignUpFormProps) {
                 </ThemedText>
               </Pressable>
             </View>
-            {footer}
           </ScrollView>
         </KeyboardAvoidingView>
         <KeyboardDoneAccessory />

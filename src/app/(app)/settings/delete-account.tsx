@@ -1,4 +1,3 @@
-import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,11 +8,13 @@ import { FormField } from '@/components/ui/FormField';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/AuthContext';
+import { useSync } from '@/features/sync/SyncContext';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError } from '@/lib/apiClient';
 
 export default function DeleteAccountScreen() {
-  const { user, deleteAccount } = useAuth();
+  const { user } = useAuth();
+  const { deleteAccountAndClear } = useSync();
   const theme = useTheme();
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -25,9 +26,9 @@ export default function DeleteAccountScreen() {
     setError(null);
     setDeleting(true);
     try {
-      await deleteAccount(password);
-      Alert.alert('Account deleted', 'Your Odomap account has been permanently deleted.');
-      router.back();
+      // Signs out too, which swaps in the sign-in screen by itself.
+      await deleteAccountAndClear(password);
+      Alert.alert('Account deleted', 'Your Odomap account and its data have been permanently deleted.');
     } catch (e) {
       if (e instanceof ApiError && e.field === 'password') setPasswordError(e.message);
       else setError(e instanceof ApiError ? e.message : 'Something went wrong. Try again.');
@@ -57,8 +58,7 @@ export default function DeleteAccountScreen() {
               saved to it in the cloud, including photos and receipts. It also signs you out.
             </ThemedText>
             <ThemedText type="default" themeColor="textSecondary">
-              Your rides, bikes, and records on this phone stay here, but from then on they’re saved only on this
-              phone.
+              Your rides, bikes, and records are removed from this phone too.
             </ThemedText>
 
             <FormField

@@ -13,7 +13,8 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useSettings } from '@/features/settings/SettingsContext';
-import { useSync, type SyncState } from '@/features/sync/SyncContext';
+import { getActiveRideId } from '@/features/ride-tracking/activeRideStore';
+import { UnsavedChangesError, useSync, type SyncState } from '@/features/sync/SyncContext';
 import { TEXT_SCALE_LABELS, type ThemeMode } from '@/features/settings/settingsLocalDb';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes } from '@/services/bikesService';
@@ -42,8 +43,9 @@ const THEME_MODE_LABELS: Record<ThemeMode, string> = {
 
 export default function SettingsScreen() {
   const { profile, units, setUnits, textScale, themeMode } = useSettings();
-  const { status: authStatus, user: authUser, signOut } = useAuth();
-  const { syncState, lastSyncedAt, photoBackup, restore } = useSync();
+  const { user: authUser } = useAuth();
+  const { syncState, lastSyncedAt, photoBackup, restore, signOutAndClear } = useSync();
+  const [signingOut, setSigningOut] = useState(false);
   const theme = useTheme();
   const [syncError, setSyncError] = useState<string | null>(null);
   const [bikeCount, setBikeCount] = useState(0);
@@ -60,11 +62,42 @@ export default function SettingsScreen() {
     }, [])
   );
 
-  const onSignOut = () => {
-    Alert.alert('Sign out?', 'Your rides, bikes, and records stay on this phone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => void signOut() },
-    ]);
+  const runSignOut = async (force: boolean) => {
+    setSigningOut(true);
+    try {
+      await signOutAndClear({ force });
+    } catch (e) {
+      setSigningOut(false);
+      if (!(e instanceof UnsavedChangesError)) {
+        Alert.alert('Couldn’t sign out', 'Try again in a moment.');
+        return;
+      }
+      Alert.alert(
+        'Not everything is saved yet',
+        e.reason === 'photos'
+          ? 'Some photos or receipts aren’t saved to your account. If you sign out now, they’ll be removed from this phone and lost.'
+          : 'Odomap can’t reach your account right now, so your latest changes aren’t saved. If you sign out now, they’ll be lost.',
+        [
+          { text: 'Stay Signed In', style: 'cancel' },
+          { text: 'Sign Out Anyway', style: 'destructive', onPress: () => void runSignOut(true) },
+        ]
+      );
+    }
+  };
+
+  const onSignOut = async () => {
+    if (await getActiveRideId()) {
+      Alert.alert('Finish your ride first', 'A ride is being recorded. Stop it before signing out so it’s saved to your account.');
+      return;
+    }
+    Alert.alert(
+      'Sign out?',
+      'Everything is saved to your account, then removed from this phone. Sign in again to bring it all back.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign Out', style: 'destructive', onPress: () => void runSignOut(false) },
+      ]
+    );
   };
 
   const onRestore = () => {
@@ -116,47 +149,26 @@ export default function SettingsScreen() {
             <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
               Account
             </ThemedText>
-            {authStatus === 'signedIn' ? (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.controlCaption}>
-                {authUser ? `Signed in as @${authUser.username}` : 'Signed in'}
-                {`\n${describeSaveStatus(syncState, lastSyncedAt, photoBackup === 'full')}`}
-              </ThemedText>
-            ) : (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.controlCaption}>
-                Your data is saved only on this phone. Create an account to keep it safe in the cloud.
-              </ThemedText>
-            )}
+            <ThemedText type="small" themeColor="textSecondary" style={styles.controlCaption}>
+              {authUser ? `Signed in as @${authUser.username}` : 'Signed in'}
+              {`\n${describeSaveStatus(syncState, lastSyncedAt, photoBackup === 'full')}`}
+            </ThemedText>
             <ThemedView type="backgroundElement" style={styles.card}>
-              {authStatus === 'signedOut' ? (
-                <SettingsRow
-                  title="Sign In or Create Account"
-                  subtitle="Free — everything saves automatically, photos too"
-                  onPress={() => router.push('/(app)/auth/sign-in')}
-                  showDivider
-                />
-              ) : null}
               <SettingsRow
                 title="Profile"
                 subtitle="Name & bio"
                 onPress={() => router.push('/(app)/settings/account')}
-                showDivider={authStatus === 'signedIn'}
+                showDivider
               />
-              {authStatus === 'signedIn' ? (
-                <SettingsRow
-                  title="Change Password"
-                  onPress={() => router.push('/(app)/settings/change-password')}
-                />
-              ) : null}
+              <SettingsRow title="Change Password" onPress={() => router.push('/(app)/settings/change-password')} />
             </ThemedView>
-            {authStatus === 'signedIn' ? (
-              <ThemedView type="backgroundElement" style={[styles.card, styles.controlGap]}>
-                <SettingsRow
-                  title="Restore from Account"
-                  subtitle="Bring your saved data onto this phone"
-                  onPress={onRestore}
-                />
-              </ThemedView>
-            ) : null}
+            <ThemedView type="backgroundElement" style={[styles.card, styles.controlGap]}>
+              <SettingsRow
+                title="Restore from Account"
+                subtitle="Bring your saved data onto this phone"
+                onPress={onRestore}
+              />
+            </ThemedView>
             {syncError ? (
               <ThemedText type="small" style={[styles.errorText, { color: theme.danger }]}>
                 {syncError}
@@ -210,18 +222,22 @@ export default function SettingsScreen() {
 
           {/* Last on the page, the usual iOS spot, so the destructive actions
               are out of the way of everyday settings. */}
-          {authStatus === 'signedIn' ? (
-            <Animated.View entering={FadeInDown.delay(330).duration(450)} style={styles.section}>
-              <ThemedView type="backgroundElement" style={styles.card}>
-                <SettingsRow title="Sign Out" onPress={onSignOut} showChevron={false} showDivider />
-                <SettingsRow
-                  title="Delete Account"
-                  destructive
-                  onPress={() => router.push('/(app)/settings/delete-account')}
-                />
-              </ThemedView>
-            </Animated.View>
-          ) : null}
+          <Animated.View entering={FadeInDown.delay(330).duration(450)} style={styles.section}>
+            <ThemedView type="backgroundElement" style={styles.card}>
+              <SettingsRow
+                title="Sign Out"
+                onPress={() => void onSignOut()}
+                loading={signingOut}
+                showChevron={false}
+                showDivider
+              />
+              <SettingsRow
+                title="Delete Account"
+                destructive
+                onPress={() => router.push('/(app)/settings/delete-account')}
+              />
+            </ThemedView>
+          </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(360).duration(450)} style={styles.footer}>
             <ThemedText type="small" themeColor="textSecondary">
