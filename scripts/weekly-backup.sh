@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs weekly via a macOS LaunchAgent (see scripts/com.bikeapp.weeklybackup.plist).
+# Runs weekly via a macOS LaunchAgent (see scripts/com.odomap.weeklybackup.plist).
 # Commits any pending local work, pushes the current branch, and — if
 # anything actually changed since last week's snapshot — cuts a new
 # weekN branch and pushes that too.

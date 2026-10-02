@@ -8,6 +8,8 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 export function getDb() {
   if (!dbPromise) {
     // Change events let saved data go to the cloud automatically (SyncContext).
+    // The file keeps the app's old name: renaming it would open an empty
+    // database and lose everything already saved on the phone.
     dbPromise = SQLite.openDatabaseAsync('bikeapp.db', { enableChangeListener: true }).then(async (db) => {
       await db.execAsync(`
         PRAGMA journal_mode = WAL;

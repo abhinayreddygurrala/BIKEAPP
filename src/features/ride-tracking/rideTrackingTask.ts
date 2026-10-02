@@ -4,6 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { getActiveRideId, getActiveSegment } from '@/features/ride-tracking/activeRideStore';
 import { appendRidePoint, getNextSeq } from '@/features/ride-tracking/rideLocalDb';
 
+// Keeps the app's old name: iOS remembers registered tasks by this exact name.
 export const RIDE_TRACKING_TASK = 'bikeapp-ride-tracking-task';
 
 // Must be called at module top-level (imported once from the root layout)

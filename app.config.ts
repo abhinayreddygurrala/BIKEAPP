@@ -5,13 +5,15 @@ import withIosSceneDelegate from "./plugins/withIosSceneDelegate";
 
 const config: ExpoConfig = {
   name: "Odomap",
-  slug: "BIKEAPP",
+  slug: "odomap",
   version: "1.0.0",
   orientation: "default",
   icon: "./assets/images/icon.png",
-  scheme: "bikeapp",
+  scheme: "odomap",
   userInterfaceStyle: "automatic",
   ios: {
+    // Kept from the app's old name on purpose: changing it makes iOS treat
+    // Odomap as a different app (and the Google Maps key is locked to it).
     bundleIdentifier: "com.abhinaygurrala.bikeapp",
     buildNumber: "1",
     icon: "./assets/expo.icon",
@@ -22,7 +24,7 @@ const config: ExpoConfig = {
     },
   },
   android: {
-    package: "com.bikeapp.placeholder",
+    package: "com.abhinaygurrala.odomap",
     adaptiveIcon: {
       backgroundColor: "#0B0B0D",
       foregroundImage: "./assets/images/android-icon-foreground.png",

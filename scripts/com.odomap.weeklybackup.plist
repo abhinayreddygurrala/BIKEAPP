@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.bikeapp.weeklybackup</string>
+  <string>com.odomap.weeklybackup</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
@@ -19,8 +19,8 @@
     <integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/tmp/bikeapp-weekly-backup.out.log</string>
+  <string>/tmp/odomap-weekly-backup.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/bikeapp-weekly-backup.err.log</string>
+  <string>/tmp/odomap-weekly-backup.err.log</string>
 </dict>
 </plist>

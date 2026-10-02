@@ -4,7 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // (it can even be invoked in a fresh JS context after iOS relaunches the app
 // to service a location update), so "which ride/segment is currently
 // recording" must be read from persistent storage rather than kept in
-// memory.
+// memory. The keys keep the app's old name: renaming them would drop a ride
+// that's recording while the app updates.
 const ACTIVE_RIDE_KEY = 'bikeapp:active-ride-id';
 const ACTIVE_SEGMENT_KEY = 'bikeapp:active-ride-segment';
 
