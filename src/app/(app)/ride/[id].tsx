@@ -22,7 +22,7 @@ import {
 } from '@/features/ride-tracking/rideMath';
 import { promptTogglePin, showPinLimitAlert } from '@/features/ride-tracking/pinRideAlerts';
 import { useTheme } from '@/hooks/use-theme';
-import { shareRide } from '@/services/exportService';
+import { shareRide } from '@/services/shareService';
 import { getRideDetail, PinLimitError, setRidePinned, type RideSummary } from '@/services/ridesService';
 
 export default function RideDetailScreen() {

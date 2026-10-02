@@ -17,8 +17,6 @@ import { useSync, type SyncState } from '@/features/sync/SyncContext';
 import { TEXT_SCALE_LABELS, type ThemeMode } from '@/features/settings/settingsLocalDb';
 import { useTheme } from '@/hooks/use-theme';
 import { listBikes } from '@/services/bikesService';
-import { exportAllData } from '@/services/exportService';
-import { importBackup, pickBackupFile } from '@/services/importService';
 import { listRides } from '@/services/ridesService';
 
 const appVersion = Constants.expoConfig?.version;
@@ -48,10 +46,6 @@ export default function SettingsScreen() {
   const { syncState, lastSyncedAt, photoBackup, restore } = useSync();
   const theme = useTheme();
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
   const [bikeCount, setBikeCount] = useState(0);
   const [rideCount, setRideCount] = useState(0);
 
@@ -98,60 +92,6 @@ export default function SettingsScreen() {
     );
   };
 
-  const onExport = async () => {
-    setExportError(null);
-    setExporting(true);
-    try {
-      await exportAllData();
-    } catch (e) {
-      setExportError(e instanceof Error ? e.message : 'Failed to export data');
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const onImport = async () => {
-    setImportError(null);
-    try {
-      const picked = await pickBackupFile();
-      if (!picked) return; // user canceled the file picker
-
-      const { bundle, preview } = picked;
-      Alert.alert(
-        'Replace All Data?',
-        `This backup has ${preview.bikes} bike${preview.bikes === 1 ? '' : 's'}, ${preview.rides} ride${
-          preview.rides === 1 ? '' : 's'
-        }, ${preview.maintenanceRecords} service record${preview.maintenanceRecords === 1 ? '' : 's'}, ${
-          preview.fuelLogs
-        } fuel log${preview.fuelLogs === 1 ? '' : 's'}, and ${preview.expenses} expense${
-          preview.expenses === 1 ? '' : 's'
-        }.\n\nImporting will permanently replace everything currently on this phone with this backup. Photos aren’t included in backups and won’t be restored.\n\nThis can’t be undone.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Replace Everything',
-            style: 'destructive',
-            onPress: async () => {
-              setImporting(true);
-              try {
-                await importBackup(bundle);
-                setBikeCount(preview.bikes);
-                setRideCount(preview.rides);
-                Alert.alert('Import Complete', 'Force-quit and reopen Odomap to see your restored data.');
-              } catch (e) {
-                setImportError(e instanceof Error ? e.message : 'Failed to import backup');
-              } finally {
-                setImporting(false);
-              }
-            },
-          },
-        ]
-      );
-    } catch (e) {
-      setImportError(e instanceof Error ? e.message : 'Failed to read that file');
-    }
-  };
-
   return (
     <ThemedView style={styles.flex}>
       {/* Top inset only: the list scrolls under the tab bar, and iOS adds
@@ -181,12 +121,16 @@ export default function SettingsScreen() {
                 {authUser ? `Signed in as @${authUser.username}` : 'Signed in'}
                 {`\n${describeSaveStatus(syncState, lastSyncedAt, photoBackup === 'full')}`}
               </ThemedText>
-            ) : null}
+            ) : (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.controlCaption}>
+                Your data is saved only on this phone. Create an account to keep it safe in the cloud.
+              </ThemedText>
+            )}
             <ThemedView type="backgroundElement" style={styles.card}>
               {authStatus === 'signedOut' ? (
                 <SettingsRow
                   title="Sign In or Create Account"
-                  subtitle="Save your rides, bikes & records to the cloud"
+                  subtitle="Free — everything saves automatically, photos too"
                   onPress={() => router.push('/(app)/auth/sign-in')}
                   showDivider
                 />
@@ -214,7 +158,7 @@ export default function SettingsScreen() {
               </ThemedView>
             ) : null}
             {syncError ? (
-              <ThemedText type="small" style={[styles.exportError, { color: theme.danger }]}>
+              <ThemedText type="small" style={[styles.errorText, { color: theme.danger }]}>
                 {syncError}
               </ThemedText>
             ) : null}
@@ -245,37 +189,6 @@ export default function SettingsScreen() {
                 onPress={() => router.push('/(app)/bikes')}
               />
             </ThemedView>
-          </Animated.View>
-
-          <Animated.View entering={FadeInDown.delay(220).duration(450)} style={styles.section}>
-            <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
-              Data
-            </ThemedText>
-            <ThemedView type="backgroundElement" style={styles.card}>
-              <SettingsRow
-                title="Export My Data"
-                subtitle="Save a backup to Drive, Files, or Gmail"
-                onPress={onExport}
-                loading={exporting}
-                showDivider
-              />
-              <SettingsRow
-                title="Import My Data"
-                subtitle="Restore from a backup file"
-                onPress={onImport}
-                loading={importing}
-              />
-            </ThemedView>
-            {exportError ? (
-              <ThemedText type="small" style={[styles.exportError, { color: theme.danger }]}>
-                {exportError}
-              </ThemedText>
-            ) : null}
-            {importError ? (
-              <ThemedText type="small" style={[styles.exportError, { color: theme.danger }]}>
-                {importError}
-              </ThemedText>
-            ) : null}
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(290).duration(450)} style={styles.section}>
@@ -348,7 +261,7 @@ const styles = StyleSheet.create({
   controlGap: {
     marginTop: Spacing.three,
   },
-  exportError: {
+  errorText: {
     marginTop: Spacing.two,
     marginLeft: Spacing.one,
   },
