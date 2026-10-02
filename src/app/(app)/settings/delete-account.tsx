@@ -53,12 +53,12 @@ export default function DeleteAccountScreen() {
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             <ThemedText type="default">
-              This permanently deletes your Odomap account — your username, email, and phone number — and signs you
-              out.
+              This permanently deletes your Odomap account — your username, email, and phone number — and everything
+              saved to it in the cloud, including photos and receipts. It also signs you out.
             </ThemedText>
             <ThemedText type="default" themeColor="textSecondary">
-              Your rides, bikes, and maintenance records live on this phone, not in your account, so they are not
-              affected.
+              Your rides, bikes, and records on this phone stay here, but from then on they’re saved only on this
+              phone.
             </ThemedText>
 
             <FormField

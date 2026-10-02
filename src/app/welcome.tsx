@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
@@ -20,11 +20,16 @@ export default function WelcomeScreen() {
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn');
 
   const skip = (
-    <Pressable onPress={() => void skipSignIn()} hitSlop={12} style={styles.skip} accessibilityRole="button">
-      <ThemedText type="small" themeColor="textSecondary">
-        Skip for now
+    <View style={styles.skipArea}>
+      <Pressable onPress={() => void skipSignIn()} hitSlop={12} style={styles.skip} accessibilityRole="button">
+        <ThemedText type="small" themeColor="textSecondary">
+          Skip for now
+        </ThemedText>
+      </Pressable>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.skipNote}>
+        If you skip, your data is saved only on this phone. You can create an account later in Settings.
       </ThemedText>
-    </Pressable>
+    </View>
   );
 
   return mode === 'signIn' ? (
@@ -35,9 +40,14 @@ export default function WelcomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  skip: {
-    alignSelf: 'center',
-    paddingVertical: Spacing.two,
+  skipArea: {
+    alignItems: 'center',
     marginTop: Spacing.two,
+  },
+  skip: {
+    paddingVertical: Spacing.two,
+  },
+  skipNote: {
+    textAlign: 'center',
   },
 });

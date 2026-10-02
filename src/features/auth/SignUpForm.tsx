@@ -116,7 +116,7 @@ export function SignUpForm({ onDone, onSwitch, footer }: SignUpFormProps) {
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             <MovingLetters text="Odomap" style={[styles.title, { color: theme.text }]} />
             <ThemedText type="default" themeColor="textSecondary" style={styles.subtitle}>
-              Create an account to join group chat. Your rides stay on your phone either way.
+              A free account saves your bikes, rides, and photos to the cloud automatically, so they’re safe if you lose or switch phones.
             </ThemedText>
 
             {!isApiConfigured() ? (

@@ -51,7 +51,7 @@ export function SignInForm({ onDone, onSwitch, footer }: SignInFormProps) {
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             <MovingLetters text="Odomap" style={[styles.title, { color: theme.text }]} />
             <ThemedText type="default" themeColor="textSecondary" style={styles.subtitle}>
-              Sign in to join group chat.
+              Sign in to keep your bikes, rides, and photos saved in the cloud.
             </ThemedText>
 
             {!isApiConfigured() ? (
