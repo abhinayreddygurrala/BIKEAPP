@@ -66,6 +66,9 @@ export function useRideRecorder() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentRef = useRef(0);
   const lean = useLeanAngleTracker(status === 'recording');
+  // These are stable across renders; `lean` itself is a new object on every
+  // sensor update, so callbacks depend on these instead.
+  const { reset: resetLean, getCurveEvents, getFinalStats } = lean;
 
   const refreshFromDb = useCallback(async (id: string) => {
     const dbPoints = await getRidePoints(id);
@@ -97,7 +100,7 @@ export function useRideRecorder() {
       const id = uuidv4();
       const startedAt = new Date().toISOString();
       segmentRef.current = 0;
-      lean.reset();
+      resetLean();
 
       await createLocalRide(id, bikeId, startedAt);
       await setActiveRideId(id);
@@ -110,7 +113,7 @@ export function useRideRecorder() {
       setStatus('recording');
       startPolling(id);
     },
-    [startPolling, lean]
+    [startPolling, resetLean]
   );
 
   const pause = useCallback(async () => {
@@ -144,8 +147,8 @@ export function useRideRecorder() {
     const routePolyline = encodeRoutePolyline(finalPoints);
     // Cross-reference the sensor-detected curve events against GPS to get
     // fastest-speed and longest-distance per curve, not just steepest angle.
-    const curveRecords = computeCurveRecords(lean.getCurveEvents(), finalPoints);
-    const finalLean = lean.getFinalStats();
+    const curveRecords = computeCurveRecords(getCurveEvents(), finalPoints);
+    const finalLean = getFinalStats();
 
     await updateLocalRideStats(rideId, {
       distance_meters: finalStats.distanceMeters,
@@ -182,7 +185,7 @@ export function useRideRecorder() {
     setStatus('stopped');
 
     return rideId;
-  }, [rideId, stopPolling, lean.getCurveEvents, lean.getFinalStats]);
+  }, [rideId, stopPolling, getCurveEvents, getFinalStats]);
 
   const coordinates = useMemo(
     () => points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
