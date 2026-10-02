@@ -214,6 +214,11 @@ export default function SettingsScreen() {
                 showDivider
               />
               <SettingsRow
+                title="Terms of Use"
+                onPress={() => Linking.openURL('https://abhinayreddygurrala.github.io/BIKEAPP/terms.html')}
+                showDivider
+              />
+              <SettingsRow
                 title="Support"
                 onPress={() => Linking.openURL('https://abhinayreddygurrala.github.io/BIKEAPP/support.html')}
               />

@@ -17,6 +17,7 @@ import { ApiError, isApiConfigured } from '@/lib/apiClient';
 // the server remains the authority.
 const USERNAME_RE = /^[A-Za-z][A-Za-z0-9_]{2,19}$/;
 const PRIVACY_URL = 'https://abhinayreddygurrala.github.io/BIKEAPP/privacy.html';
+const TERMS_URL = 'https://abhinayreddygurrala.github.io/BIKEAPP/terms.html';
 
 type FieldName = 'username' | 'email' | 'phone' | 'password';
 
@@ -34,6 +35,8 @@ export function SignUpForm({ onDone, onSwitch }: SignUpFormProps) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  // Starts unticked: agreeing has to be the rider's own action, not a default.
+  const [agreed, setAgreed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldName, string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,7 +90,8 @@ export function SignUpForm({ onDone, onSwitch }: SignUpFormProps) {
     !usernameTaken &&
     email.trim().length > 0 &&
     phone.trim().length > 0 &&
-    password.length > 0;
+    password.length > 0 &&
+    agreed;
 
   const onSubmit = async () => {
     setError(null);
@@ -184,6 +188,47 @@ export function SignUpForm({ onDone, onSwitch }: SignUpFormProps) {
               error={fieldErrors.password}
             />
 
+            {/* Right above the button it unlocks, so it's clear why Create
+                Account stays greyed out until it's ticked. Tapping the
+                sentence ticks it too; the two links just open the pages. */}
+            <View style={styles.agreeRow}>
+              <Pressable
+                onPress={() => setAgreed((v) => !v)}
+                hitSlop={10}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: agreed }}
+                accessibilityLabel="I agree to the Terms of Use and Privacy Policy"
+                style={[
+                  styles.checkbox,
+                  agreed ? { backgroundColor: theme.accent, borderColor: theme.accent } : { borderColor: theme.textSecondary },
+                ]}>
+                {agreed ? (
+                  <ThemedText type="smallBold" style={[styles.checkmark, { color: theme.accentText }]}>
+                    ✓
+                  </ThemedText>
+                ) : null}
+              </Pressable>
+              <ThemedText type="small" style={styles.agreeText} onPress={() => setAgreed((v) => !v)}>
+                I agree to the{' '}
+                <ThemedText
+                  type="small"
+                  themeColor="accent"
+                  accessibilityRole="link"
+                  onPress={() => Linking.openURL(TERMS_URL)}>
+                  Terms of Use
+                </ThemedText>{' '}
+                and{' '}
+                <ThemedText
+                  type="small"
+                  themeColor="accent"
+                  accessibilityRole="link"
+                  onPress={() => Linking.openURL(PRIVACY_URL)}>
+                  Privacy Policy
+                </ThemedText>
+                .
+              </ThemedText>
+            </View>
+
             {error ? (
               <ThemedText type="small" style={{ color: theme.danger }}>
                 {error}
@@ -191,14 +236,6 @@ export function SignUpForm({ onDone, onSwitch }: SignUpFormProps) {
             ) : null}
 
             <PrimaryButton label="Create Account" onPress={onSubmit} loading={loading} disabled={!canSubmit} />
-
-            <ThemedText type="small" themeColor="textSecondary" style={styles.legal}>
-              By creating an account you agree to our{' '}
-              <ThemedText type="small" themeColor="accent" onPress={() => Linking.openURL(PRIVACY_URL)}>
-                Privacy Policy
-              </ThemedText>
-              .
-            </ThemedText>
 
             <View style={styles.switchRow}>
               <ThemedText type="small" themeColor="textSecondary">
@@ -240,8 +277,25 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     padding: Spacing.three,
   },
-  legal: {
-    textAlign: 'center',
+  agreeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkmark: {
+    fontSize: 14,
+    lineHeight: 16,
+  },
+  agreeText: {
+    flex: 1,
   },
   switchRow: {
     flexDirection: 'row',
