@@ -1,8 +1,17 @@
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View, type AlertButton } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, View, type AlertButton } from 'react-native';
 import { Image } from 'expo-image';
 import type { ImagePickerOptions } from 'expo-image-picker';
+import { StatusBar } from 'expo-status-bar';
+import Animated, {
+  useAnimatedReaction,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -58,8 +67,13 @@ try {
 }
 const glassAvailable = !!GlassEffect?.isGlassEffectAPIAvailable();
 
-const HERO_HEIGHT = 320;
+// Photo height below the status bar. The photo runs edge to edge under the
+// see-through header, so the real height adds the status bar on top of this.
+const HERO_HEIGHT = 340;
 const CARD_OVERLAP = 64;
+// Standard iOS nav bar height — only used to decide when the name card has
+// scrolled up under the header, so it doesn't need to be exact.
+const NAV_BAR_HEIGHT = 44;
 
 /** "today" / "yesterday" / "3 days ago" / "on Sep 12" — counted in calendar days, not 24h blocks. */
 function formatLastRidden(iso: string): string {
@@ -90,6 +104,30 @@ export default function BikeDetailScreen() {
   const [removed, setRemoved] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+
+  // Scroll-driven hero: pulling down past the top stretches the photo to fill
+  // the gap (instead of showing empty background above it), and once the
+  // name card scrolls up under the header, the header shows the bike's name.
+  const insets = useSafeAreaInsets();
+  const heroHeight = insets.top + HERO_HEIGHT;
+  const titleThreshold = heroHeight - CARD_OVERLAP - (insets.top + NAV_BAR_HEIGHT);
+  const scrollY = useSharedValue(0);
+  const [pastHero, setPastHero] = useState(false);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollY.value = e.contentOffset.y;
+  });
+  useAnimatedReaction(
+    () => scrollY.value > titleThreshold,
+    (current, previous) => {
+      if (current !== previous) scheduleOnRN(setPastHero, current);
+    }
+  );
+  const heroStretchStyle = useAnimatedStyle(() => {
+    const pull = Math.min(scrollY.value, 0);
+    // Scale from the centre, then shift up by half the pull, so the bottom
+    // edge stays put and the top edge follows the finger.
+    return { transform: [{ translateY: pull / 2 }, { scale: (heroHeight - pull) / heroHeight }] };
+  });
 
   // Re-read on every focus, not just on mount — coming back from Edit
   // (e.g. after setting the odometer) or from logging a service should show
@@ -218,6 +256,8 @@ export default function BikeDetailScreen() {
     }
   };
 
+  // Android only — on iOS the header camera button is a native menu instead
+  // (see Stack.Toolbar below).
   const onEditPhoto = () => {
     const buttons: AlertButton[] = [
       { text: 'Take Photo', onPress: () => pickFrom('camera') },
@@ -282,6 +322,9 @@ export default function BikeDetailScreen() {
     ? [DUE_STATUS_LABELS[nextDue.status], describeDue(nextDue, units)].filter(Boolean).join(' · ')
     : null;
 
+  const onEdit = () => router.push({ pathname: '/(app)/bikes/edit', params: { id: bike.id } });
+  const onOpenPhoto = (uri: string) => router.push({ pathname: '/(app)/bikes/photo', params: { uri } });
+
   // dismissTo, not push — this pops back to the tab bar and switches it to
   // Maintenance (with this bike already open), rather than stacking a second
   // copy of the tabs on top of this page.
@@ -295,44 +338,103 @@ export default function BikeDetailScreen() {
     <ThemedView style={styles.flex}>
       <Stack.Screen
         options={{
-          title,
+          // Hidden while the name card is on screen — it already shows it.
+          title: pastHero ? title : '',
+          // iOS 26+ fades content under the header by itself; older iOS needs
+          // a blur once the page scrolls under the see-through header.
+          headerBlurEffect: pastHero && !glassAvailable ? 'systemChromeMaterial' : 'none',
           headerRight: () => (
-            <Pressable onPress={() => router.push({ pathname: '/(app)/bikes/edit', params: { id } })} hitSlop={8}>
-              <ThemedText type="default" style={{ color: theme.accent }}>
-                Edit
-              </ThemedText>
-            </Pressable>
+            <View style={styles.headerButtons}>
+              <Pressable
+                onPress={onEditPhoto}
+                disabled={photoBusy}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Bike photo">
+                <ThemedText type="default">📷</ThemedText>
+              </Pressable>
+              <Pressable onPress={onEdit} hitSlop={8}>
+                <ThemedText type="default" style={{ color: theme.accent }}>
+                  Edit
+                </ThemedText>
+              </Pressable>
+            </View>
           ),
         }}
       />
+      {/* Overrides headerRight on iOS. Rendered on iOS only: Android's version
+          of the toolbar drops SF Symbol icons. */}
+      {Platform.OS === 'ios' ? (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu icon="camera" title="Bike Photo" accessibilityLabel="Bike photo" disabled={photoBusy}>
+            <Stack.Toolbar.MenuAction icon="camera" onPress={() => pickFrom('camera')}>
+              Take Photo
+            </Stack.Toolbar.MenuAction>
+            <Stack.Toolbar.MenuAction icon="photo.on.rectangle" onPress={() => pickFrom('library')}>
+              Choose from Library
+            </Stack.Toolbar.MenuAction>
+            {displayPhotoUri ? (
+              <Stack.Toolbar.MenuAction icon="trash" destructive onPress={onRemovePhoto}>
+                Remove Photo
+              </Stack.Toolbar.MenuAction>
+            ) : null}
+          </Stack.Toolbar.Menu>
+          <Stack.Toolbar.Button onPress={onEdit} tintColor={theme.accent}>
+            Edit
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      ) : null}
+      {/* Light status bar text over the photo's dark top fade; back to the
+          theme's own once the page scrolls under the header. */}
+      <StatusBar style={displayPhotoUri && !pastHero ? 'light' : 'auto'} />
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Pressable
-          onPress={onEditPhoto}
-          disabled={photoBusy}
-          accessibilityRole="button"
-          accessibilityLabel={displayPhotoUri ? 'Change bike photo' : 'Add bike photo'}
-          style={styles.heroWrap}>
+      <Animated.ScrollView
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}>
+        {/* Tapping the photo opens it full screen. Changing it is only done
+            from the header camera button. */}
+        <Animated.View style={[{ height: heroHeight }, heroStretchStyle]}>
           {displayPhotoUri ? (
-            <Image source={{ uri: displayPhotoUri }} contentFit="cover" transition={200} style={styles.hero} />
+            <Pressable
+              onPress={() => onOpenPhoto(displayPhotoUri)}
+              disabled={photoBusy}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="View photo full screen"
+              style={StyleSheet.absoluteFill}>
+              <Image source={{ uri: displayPhotoUri }} contentFit="cover" transition={200} style={StyleSheet.absoluteFill} />
+            </Pressable>
           ) : (
-            <View style={[styles.hero, styles.heroPlaceholder, { backgroundColor: theme.backgroundElement }]}>
+            <View
+              style={[
+                StyleSheet.absoluteFill,
+                styles.heroPlaceholder,
+                { backgroundColor: theme.backgroundElement, paddingTop: insets.top },
+              ]}>
               <ThemedText style={styles.heroPlaceholderEmoji}>🏍️</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                Tap to add a photo
+                Tap the camera button to add a photo
               </ThemedText>
             </View>
           )}
+          {displayPhotoUri ? (
+            <View pointerEvents="none" style={[styles.heroTopFade, { height: insets.top + 96 }]} />
+          ) : null}
+          {/* Fades the bottom of the photo into the page background. */}
+          <View
+            pointerEvents="none"
+            style={[
+              styles.heroBottomFade,
+              { experimental_backgroundImage: `linear-gradient(to bottom, ${theme.background}00, ${theme.background})` },
+            ]}
+          />
           {photoBusy ? (
-            <View style={[styles.hero, styles.heroOverlay]}>
+            <View style={[StyleSheet.absoluteFill, styles.heroOverlay]}>
               <ActivityIndicator color="#fff" />
             </View>
-          ) : (
-            <View style={styles.cameraBadge} pointerEvents="none">
-              <ThemedText style={styles.cameraBadgeIcon}>📷</ThemedText>
-            </View>
-          )}
-        </Pressable>
+          ) : null}
+        </Animated.View>
 
         {glassAvailable && GlassEffect ? (
           <GlassEffect.GlassView glassEffectStyle="regular" colorScheme="dark" style={styles.nameCard}>
@@ -473,7 +575,7 @@ export default function BikeDetailScreen() {
             )}
           </Pressable>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
     </ThemedView>
   );
 }
@@ -546,13 +648,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: Spacing.six,
   },
-  heroWrap: {
-    width: '100%',
-  },
-  hero: {
-    width: '100%',
-    height: HERO_HEIGHT,
-  },
   heroPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -562,27 +657,29 @@ const styles = StyleSheet.create({
     fontSize: 64,
     lineHeight: 76,
   },
-  heroOverlay: {
+  heroTopFade: {
     position: 'absolute',
     top: 0,
+    left: 0,
+    right: 0,
+    experimental_backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0.5), rgba(0,0,0,0))',
+  },
+  heroBottomFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 140,
+  },
+  heroOverlay: {
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  cameraBadge: {
-    position: 'absolute',
-    top: Spacing.three,
-    right: Spacing.three,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  headerButtons: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  cameraBadgeIcon: {
-    fontSize: 16,
-    lineHeight: 20,
+    gap: Spacing.three,
   },
   nameCard: {
     marginTop: -CARD_OVERLAP,

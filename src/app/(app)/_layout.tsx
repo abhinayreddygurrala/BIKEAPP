@@ -59,10 +59,22 @@ export default function AppLayout() {
           headerLeft: CancelHeaderButton,
         }}
       />
+      {/* See-through header so the bike photo runs up behind it to the top of
+          the screen. Set here rather than in the page so the push transition
+          starts transparent instead of flashing a solid bar first. The page
+          fills in the title once the photo scrolls away. */}
       <Stack.Screen
         name="bikes/[id]"
-        options={{ headerShown: true, title: 'Bike', headerBackTitle: 'My Bikes' }}
+        options={{
+          headerShown: true,
+          headerTransparent: true,
+          headerBackButtonDisplayMode: 'minimal',
+          title: '',
+        }}
       />
+      {/* Full-screen photo viewer. A transparent modal, so the bike page stays
+          visible behind it while the photo is dragged down to close. */}
+      <Stack.Screen name="bikes/photo" options={{ presentation: 'transparentModal', animation: 'fade' }} />
       <Stack.Screen
         name="bikes/edit"
         options={{
