@@ -5,6 +5,7 @@ import { generateKeyPairSync } from 'node:crypto';
 
 import { buildApp } from '../src/app.js';
 import { migrate, openDatabase } from '../src/db.js';
+import { billingMonth, GoogleMapsError, type GoogleMaps } from '../src/maps.js';
 import { createGcsStore, type MediaStore } from '../src/storage.js';
 
 const db = openDatabase(':memory:');
@@ -20,6 +21,30 @@ const deletedObjects: string[] = [];
 const media: MediaStore = { signedUrl: signer.signedUrl, deleteObject: async (key) => void deletedObjects.push(key) };
 const MB = 1024 * 1024;
 const app = await buildApp({ db, sessionDays: 60, logger: false, media, mediaUserQuotaBytes: 20 * MB, mediaTotalQuotaBytes: 30 * MB });
+
+/** Google's encoded polyline format (precision 5), for building fake routes. */
+function polyline(points: [number, number][]): string {
+  let out = '';
+  let prevLat = 0;
+  let prevLng = 0;
+  const encode = (value: number) => {
+    let v = value < 0 ? ~(value << 1) : value << 1;
+    while (v >= 0x20) {
+      out += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+      v >>= 5;
+    }
+    out += String.fromCharCode(v + 63);
+  };
+  for (const [lat, lng] of points) {
+    const la = Math.round(lat * 1e5);
+    const ln = Math.round(lng * 1e5);
+    encode(la - prevLat);
+    encode(ln - prevLng);
+    prevLat = la;
+    prevLng = ln;
+  }
+  return out;
+}
 
 let passed = 0;
 function ok(name: string) {
@@ -500,6 +525,100 @@ console.log('Malformed requests');
   });
   assert.ok(huge.statusCode === 413 || huge.statusCode === 400);
   ok('oversized bodies are rejected');
+}
+
+console.log('Maps');
+{
+  const api = client();
+  const status = await api('GET', '/maps/status');
+  assert.equal(status.json?.google, false);
+  const noKey = await api('POST', '/maps/routes', { body: { from: { latitude: 1, longitude: 1 }, to: { latitude: 2, longitude: 2 } } });
+  assert.equal(noKey.status, 503);
+  assert.equal(noKey.json?.error.code, 'maps_unavailable');
+  ok('without a Google key the app is told to use Apple maps');
+
+  // A straight highway and a zig-zag back road, as Google would encode them.
+  const straight = polyline([[35.0, -94.0], [35.1, -94.0], [35.2, -94.0], [35.3, -94.0]]);
+  const twisty = polyline([[35.0, -94.0], [35.05, -93.97], [35.1, -94.0], [35.15, -93.97], [35.2, -94.0], [35.3, -94.0]]);
+  let failNext = false;
+  const calls: string[] = [];
+  const fake: GoogleMaps = {
+    async autocomplete(input) {
+      calls.push('autocomplete');
+      return [{ placeId: 'ozark-ar', title: input, subtitle: 'Arkansas, USA' }];
+    },
+    async placeDetails(placeId) {
+      calls.push('place');
+      return placeId === 'missing' ? null : { latitude: 35.49, longitude: -93.83, address: 'Ozark, AR, USA' };
+    },
+    async computeRoutes(_from, _to, avoidHighways) {
+      calls.push(avoidHighways ? 'routes-scenic' : 'routes');
+      if (failNext) throw new GoogleMapsError('quota');
+      return avoidHighways
+        ? [{ polyline: twisty, distanceMeters: 40_000, durationSeconds: 3000 }]
+        : [{ polyline: straight, distanceMeters: 33_000, durationSeconds: 1800 }];
+    },
+  };
+  const mapsDb = openDatabase(':memory:');
+  migrate(mapsDb, () => {});
+  const mapsApp = await buildApp({
+    db: mapsDb,
+    sessionDays: 60,
+    logger: false,
+    google: fake,
+    mapsCaps: { routes: 4, autocomplete: 2, placeDetails: 2 },
+  });
+  const maps = async (method: 'GET' | 'POST', url: string, body?: unknown) => {
+    const res = await mapsApp.inject({ method, url, remoteAddress: '203.0.113.200', ...(body ? { payload: body as object } : {}) });
+    return { status: res.statusCode, json: JSON.parse(res.body) as Record<string, any> };
+  };
+
+  assert.equal((await maps('GET', '/maps/status')).json.google, true);
+  const token = '3f2b8c1e-9d4a-4c7b-8e6f-1a2b3c4d5e6f';
+  const suggestions = await maps('POST', '/maps/autocomplete', { input: 'Ozark', sessionToken: token, near: { latitude: 35, longitude: -94 } });
+  assert.equal(suggestions.status, 200);
+  assert.equal(suggestions.json.suggestions[0].placeId, 'ozark-ar');
+  const place = await maps('POST', '/maps/place', { placeId: 'ozark-ar', sessionToken: token });
+  assert.equal(place.json.address, 'Ozark, AR, USA');
+  ok('place search and lookup go through Google');
+
+  assert.equal((await maps('POST', '/maps/autocomplete', { input: 'x', sessionToken: 'bad token!' })).status, 400);
+  assert.equal((await maps('POST', '/maps/routes', { from: { latitude: 200, longitude: 0 }, to: { latitude: 0, longitude: 0 } })).status, 400);
+  const missing = await maps('POST', '/maps/place', { placeId: 'missing', sessionToken: token });
+  assert.equal(missing.status, 404);
+  assert.equal(missing.json.error.code, 'place_not_found');
+  ok('bad searches and unknown places get clear errors');
+
+  const routes = await maps('POST', '/maps/routes', { from: { latitude: 35, longitude: -94 }, to: { latitude: 35.3, longitude: -94 } });
+  assert.equal(routes.status, 200);
+  assert.equal(routes.json.normal[0].polyline, straight);
+  assert.equal(routes.json.noHighways[0].polyline, twisty);
+  assert.equal(routes.json.noHighways[0].durationSeconds, 3000);
+  ok('route search returns both the normal and the highway-free routes');
+
+  failNext = true;
+  const googleDown = await maps('POST', '/maps/routes', { from: { latitude: 35, longitude: -94 }, to: { latitude: 35.3, longitude: -94 } });
+  assert.equal(googleDown.status, 503);
+  assert.equal(googleDown.json.error.code, 'maps_unavailable');
+  ok('a Google failure tells the app to use Apple maps');
+
+  // Both route searches used the routes allowance of 4 (2 calls each).
+  assert.equal((await maps('GET', '/maps/status')).json.google, false);
+  const callsBefore = calls.length;
+  const capped = await maps('POST', '/maps/routes', { from: { latitude: 35, longitude: -94 }, to: { latitude: 35.3, longitude: -94 } });
+  assert.equal(capped.json.error.code, 'maps_unavailable');
+  assert.equal(calls.length, callsBefore);
+  const month = billingMonth();
+  const row = mapsDb.prepare('SELECT count FROM maps_usage WHERE month = ? AND sku = ?').get(month, 'routes') as { count: number };
+  assert.equal(row.count, 4);
+  ok('at the monthly cap the server stops calling Google');
+
+  assert.equal(billingMonth(new Date('2026-11-01T05:00:00Z')), '2026-10');
+  assert.equal(billingMonth(new Date('2026-11-01T08:00:00Z')), '2026-11');
+  ok('usage is counted by the Pacific-time month Google bills by');
+
+  await mapsApp.close();
+  mapsDb.close();
 }
 
 await app.close();

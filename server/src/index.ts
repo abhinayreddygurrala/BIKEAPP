@@ -1,6 +1,7 @@
 import { buildApp } from './app.js';
 import { config } from './config.js';
 import { migrate, openDatabase } from './db.js';
+import { googleMapsFromEnv } from './maps.js';
 import { mediaStoreFromEnv } from './storage.js';
 
 const db = openDatabase(config.databasePath);
@@ -10,6 +11,9 @@ console.log(`[db] using ${config.databasePath}`);
 const media = mediaStoreFromEnv();
 console.log(media ? '[media] photo backup on' : '[media] photo backup off (GCS_BUCKET / GCS_KEY_FILE not set)');
 
+const google = googleMapsFromEnv();
+console.log(google ? '[maps] Google on' : '[maps] Google off (GOOGLE_MAPS_SERVER_KEY not set); the app uses Apple maps');
+
 const app = await buildApp({
   db,
   sessionDays: config.sessionDays,
@@ -17,6 +21,8 @@ const app = await buildApp({
   media,
   mediaUserQuotaBytes: config.mediaUserQuotaBytes,
   mediaTotalQuotaBytes: config.mediaTotalQuotaBytes,
+  google,
+  mapsCaps: config.mapsCaps,
 });
 
 // Expired sessions are already rejected on use; this just keeps the table small.

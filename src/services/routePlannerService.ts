@@ -1,107 +1,157 @@
-export type LatLng = { latitude: number; longitude: number };
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export type PlannedRoute = {
-  coordinates: LatLng[];
-  distanceMeters: number;
-  durationSeconds: number;
-  /** Degrees of direction change per kilometer — see curvinessPerKm below. */
-  curvinessScore: number;
+import { ApiError, apiRequest } from '@/lib/apiClient';
+import { decodeRoutePolyline } from '@/features/ride-tracking/rideMath';
+import {
+  chooseRoutes,
+  type CandidateRoute,
+  type LatLng,
+  type MapsSource,
+  type RouteOptions,
+} from '@/features/navigation/routeChoice';
+
+import { AppleMaps } from '../../modules/odomap-apple-maps';
+
+export type { LatLng, MapsSource, RouteOptions } from '@/features/navigation/routeChoice';
+
+export type PlaceSuggestion = {
+  id: string;
+  title: string;
+  subtitle: string;
+  /** Apple results come with their location; Google ones are looked up when picked. */
+  coordinate?: LatLng;
 };
 
-export type RouteOptions = {
-  scenic: PlannedRoute;
-  fastest: PlannedRoute;
-  /** False when OSRM only found one viable route, so there's nothing to pick between. */
-  hasAlternative: boolean;
-};
+export type Place = LatLng & { title: string };
 
-// The free, public OSRM demo server — no API key, no billing, unlike Google/
-// Mapbox directions. It's rate-limited and explicitly "fair use" only (see
-// https://project-osrm.org/docs/v5.24.0/api/#demo-server), which is fine for
-// one person's own app but would need a self-hosted OSRM instance to scale
-// beyond that.
-const OSRM_BASE_URL = 'https://router.project-osrm.org/route/v1/driving';
+/**
+ * Google can't be used right now (the server's free monthly allowance is
+ * spent, or the server can't be reached). The screen switches to Apple.
+ */
+export class GoogleUnavailableError extends Error {}
 
-function toRad(deg: number) {
-  return (deg * Math.PI) / 180;
+const MAPS_CHOICE_KEY = 'odomap:navigation-maps';
+
+/** Which maps the rider picked on the Navigation tab (this phone only). Google unless they chose Apple. */
+export async function getMapsChoice(): Promise<MapsSource> {
+  const saved = await AsyncStorage.getItem(MAPS_CHOICE_KEY).catch(() => null);
+  return saved === 'apple' && AppleMaps ? 'apple' : 'google';
 }
 
-function toDeg(rad: number) {
-  return (rad * 180) / Math.PI;
+export async function setMapsChoice(choice: MapsSource) {
+  await AsyncStorage.setItem(MAPS_CHOICE_KEY, choice).catch(() => {});
 }
 
-function bearing(a: LatLng, b: LatLng): number {
-  const lat1 = toRad(a.latitude);
-  const lat2 = toRad(b.latitude);
-  const deltaLng = toRad(b.longitude - a.longitude);
-  const y = Math.sin(deltaLng) * Math.cos(lat2);
-  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+/** Whether this phone has Apple's maps (iPhone only), so there's a choice to offer. */
+export function canChooseAppleMaps(): boolean {
+  return AppleMaps !== null;
 }
 
 /**
- * The public OSRM server doesn't expose road-class data, so there's no free
- * way to ask it directly for "avoid highways." Instead, this sums how many
- * degrees a route's heading changes per kilometer — a highway scores near
- * zero (long straight segments), a twisty back road scores high — and is
- * used to pick the curviest of the alternative routes OSRM returns.
+ * The maps to actually use for `choice`. Apple is always available on
+ * iPhone. Google goes through Odomap's server, which stops offering it once
+ * this month's free allowance is spent; then, or when the server can't be
+ * reached, this falls back to Apple. Null when neither is available.
  */
-function curvinessPerKm(coordinates: LatLng[], distanceMeters: number): number {
-  if (coordinates.length < 3 || distanceMeters === 0) return 0;
-  let totalTurnDeg = 0;
-  let previousBearing = bearing(coordinates[0], coordinates[1]);
-  for (let i = 1; i < coordinates.length - 1; i++) {
-    const nextBearing = bearing(coordinates[i], coordinates[i + 1]);
-    let delta = Math.abs(nextBearing - previousBearing);
-    if (delta > 180) delta = 360 - delta;
-    totalTurnDeg += delta;
-    previousBearing = nextBearing;
-  }
-  return totalTurnDeg / (distanceMeters / 1000);
-}
-
-type OsrmRoute = {
-  distance: number;
-  duration: number;
-  geometry: { coordinates: [number, number][] };
-};
-
-async function fetchOsrmRoutes(from: LatLng, to: LatLng): Promise<OsrmRoute[]> {
-  const coords = `${from.longitude},${from.latitude};${to.longitude},${to.latitude}`;
-  const url = `${OSRM_BASE_URL}/${coords}?alternatives=3&overview=full&geometries=geojson`;
-
-  let response: Response;
+export async function resolveMapsSource(choice: MapsSource): Promise<MapsSource | null> {
+  if (choice === 'apple' && AppleMaps) return 'apple';
   try {
-    response = await fetch(url);
+    const status = await apiRequest<{ google: boolean }>('/maps/status');
+    if (status.google) return 'google';
   } catch {
-    throw new Error('Could not reach the routing service. Check your connection.');
+    // Server unreachable or not set up: same as no Google.
   }
-  if (!response.ok) throw new Error('Route lookup failed. Try again in a moment.');
-
-  const data = await response.json();
-  if (data.code !== 'Ok' || !Array.isArray(data.routes) || data.routes.length === 0) {
-    throw new Error('No route found between those points.');
-  }
-  return data.routes;
+  return AppleMaps ? 'apple' : null;
 }
 
-function toPlannedRoute(route: OsrmRoute): PlannedRoute {
-  const coordinates = route.geometry.coordinates.map(([longitude, latitude]) => ({ latitude, longitude }));
-  return {
-    coordinates,
-    distanceMeters: route.distance,
-    durationSeconds: route.duration,
-    curvinessScore: curvinessPerKm(coordinates, route.distance),
-  };
+/** A Google search "session" groups the typing and the final pick into one cheap lookup. */
+export function newSearchSession(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
-/** Fetches route alternatives from OSRM and splits them into "fastest" and "scenic" (curviest). */
-export async function planRoute(from: LatLng, to: LatLng): Promise<RouteOptions> {
-  const routes = await fetchOsrmRoutes(from, to);
-  const planned = routes.map(toPlannedRoute);
+async function askServer<T>(path: string, body: unknown): Promise<T> {
+  try {
+    return await apiRequest<T>(path, { method: 'POST', body });
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      (error.code === 'maps_unavailable' || error.code === 'network' || error.code === 'not_configured' || error.status >= 500)
+    ) {
+      throw new GoogleUnavailableError(error.message);
+    }
+    throw error;
+  }
+}
 
-  const fastest = planned.reduce((best, r) => (r.durationSeconds < best.durationSeconds ? r : best));
-  const scenic = planned.reduce((best, r) => (r.curvinessScore > best.curvinessScore ? r : best));
+function requireAppleMaps() {
+  if (!AppleMaps) throw new Error('Maps aren’t available on this phone right now.');
+  return AppleMaps;
+}
 
-  return { scenic, fastest, hasAlternative: scenic !== fastest };
+export async function searchPlaces(
+  source: MapsSource,
+  query: string,
+  near: LatLng | null,
+  session: string
+): Promise<PlaceSuggestion[]> {
+  if (source === 'google') {
+    const { suggestions } = await askServer<{ suggestions: { placeId: string; title: string; subtitle: string }[] }>(
+      '/maps/autocomplete',
+      { input: query, sessionToken: session, near }
+    );
+    return suggestions.map((s) => ({ id: s.placeId, title: s.title, subtitle: s.subtitle }));
+  }
+  const places = await requireAppleMaps().searchPlaces(query, near);
+  return places.map((p) => ({
+    id: `${p.latitude},${p.longitude}`,
+    title: p.title,
+    // For a street address Apple's name is the start of the address itself
+    // ("820 Bering Dr" + "820 Bering Dr, Arlington, TX"); show it once.
+    subtitle: p.subtitle.startsWith(p.title) ? p.subtitle.slice(p.title.length).replace(/^[,\s]+/, '') : p.subtitle,
+    coordinate: { latitude: p.latitude, longitude: p.longitude },
+  }));
+}
+
+export async function resolvePlace(source: MapsSource, suggestion: PlaceSuggestion, session: string): Promise<Place> {
+  if (suggestion.coordinate) return { ...suggestion.coordinate, title: suggestion.title };
+  if (source !== 'google') throw new Error('Couldn’t find that place. Try another search.');
+  const place = await askServer<LatLng>('/maps/place', { placeId: suggestion.id, sessionToken: session });
+  return { latitude: place.latitude, longitude: place.longitude, title: suggestion.title };
+}
+
+type ServerRoute = { polyline: string; distanceMeters: number; durationSeconds: number };
+
+export async function planRoute(source: MapsSource, from: LatLng, to: LatLng): Promise<RouteOptions> {
+  let normal: CandidateRoute[];
+  let noHighways: CandidateRoute[];
+
+  if (source === 'google') {
+    const found = await askServer<{ normal: ServerRoute[]; noHighways: ServerRoute[] }>('/maps/routes', { from, to });
+    const toRoute = (r: ServerRoute): CandidateRoute => ({
+      coordinates: decodeRoutePolyline(r.polyline),
+      distanceMeters: r.distanceMeters,
+      durationSeconds: r.durationSeconds,
+    });
+    normal = found.normal.map(toRoute);
+    noHighways = found.noHighways.map(toRoute);
+  } else {
+    const apple = requireAppleMaps();
+    const toRoute = (r: { coordinates: [number, number][]; distanceMeters: number; durationSeconds: number }) => ({
+      coordinates: r.coordinates.map(([latitude, longitude]) => ({ latitude, longitude })),
+      distanceMeters: r.distanceMeters,
+      durationSeconds: r.durationSeconds,
+    });
+    try {
+      const [plain, avoiding] = await Promise.all([apple.planRoutes(from, to, false), apple.planRoutes(from, to, true)]);
+      normal = plain.map(toRoute);
+      noHighways = avoiding.map(toRoute);
+    } catch {
+      throw new Error('Couldn’t find a route between those places. Check your connection and try again.');
+    }
+  }
+
+  const options = chooseRoutes(normal, noHighways);
+  if (!options) throw new Error('No route found between those places.');
+  return options;
 }

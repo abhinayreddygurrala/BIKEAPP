@@ -38,4 +38,12 @@ export const config = {
   // Photo backup caps, kept well inside Cloud Storage's free 5 GB.
   mediaUserQuotaBytes: int('MEDIA_USER_QUOTA_MB', 1024) * 1024 * 1024,
   mediaTotalQuotaBytes: int('MEDIA_TOTAL_QUOTA_MB', 4096) * 1024 * 1024,
+  // Google Maps calls per month, a little under each free allowance (10,000
+  // for Compute Routes, Autocomplete Requests and Place Details Essentials).
+  // Past these the app uses Apple's maps, so Google never bills.
+  mapsCaps: {
+    routes: int('MAPS_ROUTES_MONTHLY_CAP', 9000),
+    autocomplete: int('MAPS_AUTOCOMPLETE_MONTHLY_CAP', 9000),
+    placeDetails: int('MAPS_PLACE_DETAILS_MONTHLY_CAP', 9000),
+  },
 } as const;

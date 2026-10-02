@@ -1,29 +1,57 @@
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  ActivityIndicator,
+  Keyboard,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_DEFAULT, PROVIDER_GOOGLE } from 'react-native-maps';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PlaceField } from '@/components/navigation/PlaceField';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { Spacing } from '@/constants/theme';
-import { useSettings } from '@/features/settings/SettingsContext';
-import { getAllLocalRides } from '@/features/ride-tracking/rideLocalDb';
-import { decodeRoutePolyline, distanceUnitLabel, formatDistance, formatDuration } from '@/features/ride-tracking/rideMath';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { GOOGLE_DARK_MAP_STYLE } from '@/constants/googleMapStyles';
+import { Spacing } from '@/constants/theme';
+import { otherAppUrl, turnByTurnUrl } from '@/features/navigation/routeChoice';
+import { usePlaceSearch } from '@/features/navigation/usePlaceSearch';
+import { getAllLocalRides } from '@/features/ride-tracking/rideLocalDb';
+import { decodeRoutePolyline, distanceUnitLabel, formatDistance } from '@/features/ride-tracking/rideMath';
+import { useSettings } from '@/features/settings/SettingsContext';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { planRoute, type LatLng, type RouteOptions } from '@/services/routePlannerService';
-import { askTripPlanner, isTripPlannerAvailable } from '@/services/tripPlannerService';
+import {
+  canChooseAppleMaps,
+  getMapsChoice,
+  GoogleUnavailableError,
+  planRoute,
+  resolveMapsSource,
+  setMapsChoice,
+  type LatLng,
+  type MapsSource,
+  type Place,
+  type PlaceSuggestion,
+  type RouteOptions,
+} from '@/services/routePlannerService';
 
 type ScreenMode = 'plan' | 'roads';
 type RouteChoice = 'scenic' | 'fastest';
+type Field = 'from' | 'to';
 
 const MODE_OPTIONS: { value: ScreenMode; label: string }[] = [
   { value: 'plan', label: 'Plan a Route' },
   { value: 'roads', label: 'My Roads' },
+];
+
+const MAPS_OPTIONS: { value: MapsSource; label: string }[] = [
+  { value: 'google', label: 'Google Maps' },
+  { value: 'apple', label: 'Apple Maps' },
 ];
 
 const ROUTE_CHOICE_OPTIONS: { value: RouteChoice; label: string }[] = [
@@ -32,58 +60,108 @@ const ROUTE_CHOICE_OPTIONS: { value: RouteChoice; label: string }[] = [
 ];
 
 const MAP_EDGE_PADDING = { top: 60, right: 50, bottom: 60, left: 50 };
+const LOCATION_TIMEOUT_MS = 10_000;
+// Room for the floating tab bar above the home indicator.
+const TAB_BAR_CLEARANCE = 96;
+
+/** "45 min" or "1 h 4 min": a trip estimate, not a stopwatch. */
+function formatTravelTime(seconds: number) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
+}
+
+/** Where the rider is now: a fresh fix if one comes quickly, else the last known one. */
+async function currentPosition(): Promise<LatLng> {
+  const permission = await Location.requestForegroundPermissionsAsync();
+  if (permission.status !== 'granted') {
+    throw new Error('Allow location access to start from where you are, or type a starting place.');
+  }
+  const fresh = await Promise.race([
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), LOCATION_TIMEOUT_MS)),
+  ]);
+  const fix = fresh ?? (await Location.getLastKnownPositionAsync().catch(() => null));
+  if (!fix) throw new Error('Couldn’t get your location. Try again, or type a starting place.');
+  return { latitude: fix.coords.latitude, longitude: fix.coords.longitude };
+}
 
 export default function NavigationScreen() {
   const theme = useTheme();
   const scheme = useColorScheme();
   const { units } = useSettings();
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
   const [mode, setMode] = useState<ScreenMode>('plan');
 
-  const [destinationQuery, setDestinationQuery] = useState('');
-  const [destination, setDestination] = useState<LatLng | null>(null);
-  const [origin, setOrigin] = useState<LatLng | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [searching, setSearching] = useState(false);
+  // The rider picks Google or Apple; Google falls back to Apple when it's
+  // unavailable (see resolveMapsSource). Each one's results may only be
+  // shown on its own map, so the map itself switches along with them.
+  const [choice, setChoice] = useState<MapsSource>('google');
+  const [source, setSource] = useState<MapsSource | null | 'checking'>('checking');
+  const mapsSource = source === 'checking' ? null : source;
+  const [here, setHere] = useState<LatLng | null>(null);
 
+  const [activeField, setActiveField] = useState<Field | null>(null);
+  const [origin, setOrigin] = useState<LatLng | null>(null);
   const [routeOptions, setRouteOptions] = useState<RouteOptions | null>(null);
   const [routeChoice, setRouteChoice] = useState<RouteChoice>('scenic');
+  const [planning, setPlanning] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const planRequest = useRef(0);
 
   const [myRides, setMyRides] = useState<{ id: string; coordinates: LatLng[] }[] | null>(null);
   const [ridesDistanceMeters, setRidesDistanceMeters] = useState(0);
 
-  const [aiQuery, setAiQuery] = useState('');
-  const [tripFrom, setTripFrom] = useState('');
-  const [tripTo, setTripTo] = useState('');
-  const [tripDates, setTripDates] = useState('');
-  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiAvailable, setAiAvailable] = useState(true);
+  const clearRoute = () => {
+    planRequest.current += 1;
+    setRouteOptions(null);
+    setRouteError(null);
+    setPlanning(false);
+  };
+
+  const from = usePlaceSearch(mapsSource, here, () => switchMaps(canChooseAppleMaps() ? 'apple' : null));
+  const to = usePlaceSearch(mapsSource, here, () => switchMaps(canChooseAppleMaps() ? 'apple' : null));
+
+  function switchMaps(next: MapsSource | null) {
+    setSource(next);
+    clearRoute();
+    setOrigin(null);
+    // One company's places can't go on the other's map: keep the text and
+    // find them again with the new maps.
+    from.researchWith(next);
+    to.researchWith(next);
+    setActiveField(to.query.trim() ? 'to' : from.query.trim() ? 'from' : null);
+  }
+
+  const onChooseMaps = async (next: MapsSource) => {
+    setChoice(next);
+    void setMapsChoice(next);
+    setSource('checking');
+    switchMaps(await resolveMapsSource(next));
+  };
 
   useEffect(() => {
-    isTripPlannerAvailable().then(setAiAvailable);
+    getMapsChoice().then(async (saved) => {
+      setChoice(saved);
+      setSource(await resolveMapsSource(saved));
+    });
   }, []);
 
-  // Open the map on the rider rather than Google's default world view — but
-  // only if location is already allowed; this tab doesn't prompt on its own.
+  // Center on the rider, but only if location is already allowed; this tab
+  // doesn't prompt until a route needs it.
   useEffect(() => {
     (async () => {
       const permission = await Location.getForegroundPermissionsAsync();
       if (permission.status !== 'granted') return;
       const last = await Location.getLastKnownPositionAsync().catch(() => null);
-      if (last) {
-        mapRef.current?.animateToRegion(
-          { latitude: last.coords.latitude, longitude: last.coords.longitude, latitudeDelta: 0.05, longitudeDelta: 0.05 },
-          0
-        );
-      }
+      if (last) setHere({ latitude: last.coords.latitude, longitude: last.coords.longitude });
     })();
   }, []);
 
-  // Cheap (local SQLite only) so it's fine to load once up front rather than
-  // waiting for the user to switch to "My Roads".
+  // Local SQLite only, so it's cheap to load up front.
   useEffect(() => {
     getAllLocalRides().then((rides) => {
       const withRoutes = rides
@@ -95,122 +173,130 @@ export default function NavigationScreen() {
     });
   }, []);
 
+  const plan = async (start: Place | null, end: Place) => {
+    if (!mapsSource) return;
+    const request = ++planRequest.current;
+    setPlanning(true);
+    setRouteError(null);
+    setRouteOptions(null);
+    try {
+      const startAt = start ?? (await currentPosition());
+      if (request !== planRequest.current) return;
+      setOrigin(startAt);
+      const options = await planRoute(mapsSource, startAt, end);
+      if (request !== planRequest.current) return;
+      setRouteOptions(options);
+      setRouteChoice(options.hasAlternative ? 'scenic' : 'fastest');
+    } catch (e) {
+      if (request !== planRequest.current) return;
+      if (e instanceof GoogleUnavailableError) switchMaps(canChooseAppleMaps() ? 'apple' : null);
+      else setRouteError(e instanceof Error ? e.message : 'Couldn’t plan that route. Try again.');
+    } finally {
+      if (request === planRequest.current) setPlanning(false);
+    }
+  };
+
   const selectedRoute = useMemo(() => {
     if (!routeOptions) return null;
     return routeChoice === 'scenic' ? routeOptions.scenic : routeOptions.fastest;
   }, [routeOptions, routeChoice]);
+  const otherRoute = routeOptions?.hasAlternative
+    ? routeChoice === 'scenic'
+      ? routeOptions.fastest
+      : routeOptions.scenic
+    : null;
 
+  const provider = mapsSource === 'apple' ? PROVIDER_DEFAULT : PROVIDER_GOOGLE;
+
+  // Re-run on a provider change too: switching maps builds a fresh map view.
   useEffect(() => {
     if (mode === 'plan' && selectedRoute) {
       mapRef.current?.fitToCoordinates(selectedRoute.coordinates, { edgePadding: MAP_EDGE_PADDING, animated: true });
+    } else if (mode === 'roads' && myRides && myRides.length > 0) {
+      mapRef.current?.fitToCoordinates(
+        myRides.flatMap((r) => r.coordinates),
+        { edgePadding: MAP_EDGE_PADDING, animated: true }
+      );
+    } else if (here) {
+      mapRef.current?.animateToRegion({ ...here, latitudeDelta: 0.05, longitudeDelta: 0.05 }, 0);
     }
-  }, [mode, selectedRoute]);
+  }, [mode, selectedRoute, myRides, here, provider]);
 
-  useEffect(() => {
-    if (mode === 'roads' && myRides && myRides.length > 0) {
-      const all = myRides.flatMap((r) => r.coordinates);
-      mapRef.current?.fitToCoordinates(all, { edgePadding: MAP_EDGE_PADDING, animated: true });
-    }
-  }, [mode, myRides]);
-
-  const inputStyle = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }];
-
-  const onSearchDestination = async () => {
-    if (!destinationQuery.trim()) return;
-    setSearchError(null);
-    setSearching(true);
-    setRouteOptions(null);
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') {
-        setSearchError('Location access is required to plan a route.');
-        return;
-      }
-      const [here, results] = await Promise.all([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-        Location.geocodeAsync(destinationQuery.trim()),
-      ]);
-      if (!results[0]) {
-        setSearchError('Could not find that place.');
-        setDestination(null);
-        return;
-      }
-      const from = { latitude: here.coords.latitude, longitude: here.coords.longitude };
-      const to = { latitude: results[0].latitude, longitude: results[0].longitude };
-      setOrigin(from);
-      setDestination(to);
-
-      const options = await planRoute(from, to);
-      setRouteOptions(options);
-      setRouteChoice('scenic');
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : 'Search failed');
-    } finally {
-      setSearching(false);
-    }
+  // Plans as soon as there's a destination, and again whenever either end is picked.
+  const onPick = async (field: Field, suggestion: PlaceSuggestion) => {
+    Keyboard.dismiss();
+    setActiveField(null);
+    const picked = await (field === 'from' ? from : to).pick(suggestion);
+    if (!picked) return;
+    const start = field === 'from' ? picked : from.place;
+    const end = field === 'to' ? picked : to.place;
+    if (end) void plan(start, end);
   };
 
-  const onOpenInMaps = () => {
-    if (!destination) return;
-    Linking.openURL(`https://maps.apple.com/?daddr=${destination.latitude},${destination.longitude}&dirflg=d`);
+  const onChangeFrom = (text: string) => {
+    from.setQuery(text);
+    // An empty From means "from where I am", so the route can be planned again right away.
+    if (!text.trim() && to.place) void plan(null, to.place);
+    else clearRoute();
   };
 
-  const onOpenAppleIntelligenceSettings = async () => {
-    // Public, App-Store-safe API only — this app is headed for submission,
-    // so no private "App-Prefs:root=" scheme. It lands on Settings' app
-    // page rather than the exact Apple Intelligence & Siri pane; Apple
-    // doesn't expose a public deep link to that specific pane.
-    await Linking.openSettings();
+  const onChangeTo = (text: string) => {
+    to.setQuery(text);
+    clearRoute();
   };
 
-  const runAiQuery = async (query: string) => {
-    if (!query.trim()) return;
-    setAiError(null);
-    setAiAnswer(null);
-    setAiLoading(true);
-    try {
-      setAiAnswer(await askTripPlanner(query.trim()));
-    } catch (e) {
-      setAiError(e instanceof Error ? e.message : 'Failed to get an answer');
-    } finally {
-      setAiLoading(false);
-    }
+  const onRide = () => {
+    if (!selectedRoute || !to.place || !mapsSource) return;
+    Linking.openURL(turnByTurnUrl(mapsSource, from.place, to.place, selectedRoute));
   };
 
-  const onAskAi = () => runAiQuery(aiQuery);
-
-  const onPlanTrip = () => {
-    if (!tripTo.trim()) return;
-    const from = tripFrom.trim();
-    const dates = tripDates.trim();
-    const query = `Plan a scenic motorcycle route ${from ? `from ${from} ` : ''}to ${tripTo.trim()}${
-      dates ? ` for a trip on ${dates}` : ''
-    }. Prioritize the curviest, most scenic roads over the fastest highway, and call out the best viewpoints or stops for a rider to visit along the way.`;
-    runAiQuery(query);
+  // The other maps app only gets the place names you typed, not this route:
+  // Google's and Apple's results may each only be used with their own maps.
+  const onOpenInOtherApp = () => {
+    if (!selectedRoute || !to.place || !mapsSource) return;
+    const otherApp = mapsSource === 'apple' ? 'google' : 'apple';
+    const start = from.place ? from.query : null;
+    Linking.openURL(otherAppUrl(otherApp, start, to.query, selectedRoute.avoidsHighways));
   };
+
+  const mapsAppName = mapsSource === 'apple' ? 'Apple Maps' : 'Google Maps';
+  const otherAppName = mapsSource === 'apple' ? 'Google Maps' : 'Apple Maps';
+  const extraMinutes =
+    routeOptions && routeChoice === 'scenic'
+      ? Math.round((routeOptions.scenic.durationSeconds - routeOptions.fastest.durationSeconds) / 60)
+      : 0;
 
   return (
     <ThemedView style={styles.flex}>
-      {/* Top inset only: the content scrolls under the tab bar, and iOS adds
-          just enough end padding for the last field to clear it. */}
+      {/* Top inset only. iOS can't pad this list for the floating tab bar
+          (the map above it comes first), so the bottom padding does. */}
       <SafeAreaView style={styles.flex} edges={['top']}>
         <MapView
+          key={mapsSource === 'apple' ? 'apple' : 'google'}
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
-          style={styles.map}
-          customMapStyle={scheme === 'dark' ? GOOGLE_DARK_MAP_STYLE : []}
+          provider={provider}
+          style={{ height: Math.max(280, Math.round(windowHeight * 0.4)) }}
+          customMapStyle={provider === PROVIDER_GOOGLE && scheme === 'dark' ? GOOGLE_DARK_MAP_STYLE : []}
+          userInterfaceStyle={scheme === 'dark' ? 'dark' : 'light'}
           showsUserLocation
           showsCompass={false}>
-          {mode === 'plan' && destination ? (
-            <Marker coordinate={destination} title={destinationQuery} pinColor={theme.accent} />
-          ) : null}
-          {mode === 'plan' && origin ? <Marker coordinate={origin} title="Start" pinColor={theme.success} /> : null}
-          {mode === 'plan' && selectedRoute ? (
+          {mode === 'plan' && otherRoute ? (
             <Polyline
-              coordinates={selectedRoute.coordinates}
-              strokeColor={routeChoice === 'scenic' ? theme.accent : theme.textSecondary}
-              strokeWidth={5}
+              coordinates={otherRoute.coordinates}
+              strokeColor={theme.textSecondary}
+              strokeWidth={4}
+              tappable
+              onPress={() => setRouteChoice(routeChoice === 'scenic' ? 'fastest' : 'scenic')}
             />
+          ) : null}
+          {mode === 'plan' && selectedRoute ? (
+            <Polyline coordinates={selectedRoute.coordinates} strokeColor={theme.accent} strokeWidth={6} />
+          ) : null}
+          {mode === 'plan' && to.place ? (
+            <Marker coordinate={to.place} title={to.place.title} pinColor={theme.accent} />
+          ) : null}
+          {mode === 'plan' && from.place && origin ? (
+            <Marker coordinate={origin} title={from.place.title} pinColor={theme.success} />
           ) : null}
           {mode === 'roads'
             ? myRides?.map((ride) => (
@@ -223,142 +309,112 @@ export default function NavigationScreen() {
           <SegmentedControl value={mode} options={MODE_OPTIONS} onChange={setMode} />
         </View>
 
-        {/* The inputs sit under a fixed map, so the keyboard would otherwise
-            cover the lower ones (Ask About a Place). This makes iOS pad the
-            list by the keyboard's height and scroll the focused field into
-            view; "handled" lets Go/Ask buttons work on the first tap while
-            the keyboard is up. */}
+        {/* The fields sit under a fixed map, so the keyboard would otherwise
+            cover the lower ones. This pads the list by the keyboard's height
+            and scrolls the focused field into view; "handled" lets taps on
+            suggestions and buttons work while the keyboard is up. */}
         <ScrollView
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }]}
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled">
-
           {mode === 'plan' ? (
             <>
               <ThemedText type="statLabel" themeColor="textSecondary">
                 Get Directions
               </ThemedText>
-              <View style={styles.row}>
-                <TextInput
-                  value={destinationQuery}
-                  onChangeText={setDestinationQuery}
-                  placeholder="Search a destination"
-                  placeholderTextColor={theme.textSecondary}
-                  style={[inputStyle, styles.flexInput]}
-                  onSubmitEditing={onSearchDestination}
-                  returnKeyType="search"
-                />
-                <PrimaryButton label="Go" onPress={onSearchDestination} loading={searching} style={styles.goButton} />
-              </View>
-              {searchError ? (
-                <ThemedText type="small" style={{ color: theme.danger }}>
-                  {searchError}
-                </ThemedText>
+              {canChooseAppleMaps() ? (
+                <SegmentedControl value={choice} options={MAPS_OPTIONS} onChange={onChooseMaps} />
               ) : null}
-
-              {routeOptions ? (
+              {source === 'checking' ? (
+                <ActivityIndicator color={theme.text} style={styles.spinner} />
+              ) : !mapsSource ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  Route planning needs a connection to Odomap. Check your connection and reopen this tab.
+                </ThemedText>
+              ) : (
                 <>
-                  {routeOptions.hasAlternative ? (
-                    <SegmentedControl value={routeChoice} options={ROUTE_CHOICE_OPTIONS} onChange={setRouteChoice} />
-                  ) : (
+                  {choice === 'google' && mapsSource === 'apple' ? (
                     <ThemedText type="small" themeColor="textSecondary">
-                      Only one viable route between those points — no scenic/fastest choice this time.
+                      Google Maps isn’t available right now, so this is using Apple Maps.
                     </ThemedText>
-                  )}
-                  <ThemedView type="backgroundElement" style={styles.routeSummary}>
-                    <ThemedText type="default">
-                      {formatDistance(selectedRoute!.distanceMeters, units)} {distanceUnitLabel(units)} ·{' '}
-                      {formatDuration(selectedRoute!.durationSeconds)}
+                  ) : null}
+                  <PlaceField
+                    value={from.query}
+                    onChangeText={onChangeFrom}
+                    placeholder="From: Current location"
+                    dotColor={theme.success}
+                    suggestions={from.suggestions}
+                    showSuggestions={activeField === 'from'}
+                    searching={from.searching}
+                    error={from.error}
+                    onPick={(suggestion) => onPick('from', suggestion)}
+                    onFocus={() => setActiveField('from')}
+                  />
+                  <PlaceField
+                    value={to.query}
+                    onChangeText={onChangeTo}
+                    placeholder="Where to?"
+                    dotColor={theme.accent}
+                    suggestions={to.suggestions}
+                    showSuggestions={activeField === 'to'}
+                    searching={to.searching}
+                    error={to.error}
+                    onPick={(suggestion) => onPick('to', suggestion)}
+                    onFocus={() => setActiveField('to')}
+                  />
+
+                  {planning ? <ActivityIndicator color={theme.text} style={styles.spinner} /> : null}
+                  {routeError ? (
+                    <ThemedText type="small" style={{ color: theme.danger }}>
+                      {routeError}
                     </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {routeChoice === 'scenic'
-                        ? 'Picked for the most turns per kilometer among the routes found.'
-                        : 'The quickest route OSRM found between those points.'}
-                    </ThemedText>
-                  </ThemedView>
-                  <PrimaryButton label="Open in Maps for Voice-Guided Turn-by-Turn" variant="muted" onPress={onOpenInMaps} />
+                  ) : null}
+
+                  {routeOptions && selectedRoute && to.place ? (
+                    <>
+                      {routeOptions.hasAlternative ? (
+                        <SegmentedControl value={routeChoice} options={ROUTE_CHOICE_OPTIONS} onChange={setRouteChoice} />
+                      ) : (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Only one sensible road between these places, so there’s no scenic or fastest choice this time.
+                        </ThemedText>
+                      )}
+                      <ThemedView type="backgroundElement" style={styles.routeSummary}>
+                        <ThemedText type="default">
+                          {formatDistance(selectedRoute.distanceMeters, units)} {distanceUnitLabel(units)} ·{' '}
+                          {formatTravelTime(selectedRoute.durationSeconds)}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {routeChoice === 'scenic' && routeOptions.hasAlternative
+                            ? [
+                                extraMinutes > 0 ? `${extraMinutes} min longer than fastest` : null,
+                                selectedRoute.avoidsHighways ? 'no highways' : null,
+                                'the twistiest roads on offer',
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')
+                            : 'The quickest way there.'}
+                        </ThemedText>
+                      </ThemedView>
+                      <PrimaryButton label={`Ride It in ${mapsAppName}`} onPress={onRide} />
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {selectedRoute.pins.length > 0
+                          ? `Opens ${mapsAppName} with voice directions. It shows ${
+                              selectedRoute.pins.length === 1 ? 'a stop' : `${selectedRoute.pins.length} stops`
+                            } along the way; ${selectedRoute.pins.length === 1 ? 'it keeps' : 'they keep'} you on this road.`
+                          : `Opens ${mapsAppName} with voice directions for this road.`}
+                      </ThemedText>
+                      <PrimaryButton label={`Open in ${otherAppName} Instead`} variant="muted" onPress={onOpenInOtherApp} />
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {otherAppName} plans its own roads to {to.place.title}
+                        {selectedRoute.avoidsHighways ? ' (avoiding highways)' : ''}, so they may differ from the line
+                        on this map.
+                      </ThemedText>
+                    </>
+                  ) : null}
                 </>
-              ) : null}
-
-              <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
-                Plan a Scenic Ride
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {aiAvailable
-                  ? 'For a multi-day trip — fill in what you have, the rest is optional.'
-                  : 'Needs Apple Intelligence turned on for this phone.'}
-              </ThemedText>
-              {!aiAvailable ? (
-                <PrimaryButton label="Turn On Apple Intelligence" variant="muted" onPress={onOpenAppleIntelligenceSettings} />
-              ) : null}
-              <TextInput
-                value={tripFrom}
-                onChangeText={setTripFrom}
-                placeholder="From (optional, e.g. current location)"
-                placeholderTextColor={theme.textSecondary}
-                editable={aiAvailable}
-                style={inputStyle}
-              />
-              <TextInput
-                value={tripTo}
-                onChangeText={setTripTo}
-                placeholder="To, e.g. Ozark, AR"
-                placeholderTextColor={theme.textSecondary}
-                editable={aiAvailable}
-                style={inputStyle}
-              />
-              <TextInput
-                value={tripDates}
-                onChangeText={setTripDates}
-                placeholder="Dates (optional, e.g. Oct 16-18)"
-                placeholderTextColor={theme.textSecondary}
-                editable={aiAvailable}
-                style={inputStyle}
-              />
-              <PrimaryButton
-                label="Plan Route"
-                onPress={onPlanTrip}
-                loading={aiLoading}
-                disabled={!aiAvailable || !tripTo.trim()}
-              />
-
-              <ThemedText type="statLabel" themeColor="textSecondary" style={styles.sectionLabel}>
-                Ask About a Place
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {aiAvailable
-                  ? 'Scenic roads and rider-worthy stops, e.g. “best roads and places to visit near Seattle”'
-                  : 'Needs Apple Intelligence turned on for this phone.'}
-              </ThemedText>
-              {!aiAvailable ? (
-                <PrimaryButton label="Turn On Apple Intelligence" variant="muted" onPress={onOpenAppleIntelligenceSettings} />
-              ) : null}
-              <View style={styles.row}>
-                <TextInput
-                  value={aiQuery}
-                  onChangeText={setAiQuery}
-                  placeholder="Ask about a place"
-                  placeholderTextColor={theme.textSecondary}
-                  editable={aiAvailable}
-                  style={[inputStyle, styles.flexInput]}
-                  onSubmitEditing={onAskAi}
-                  returnKeyType="search"
-                />
-                <PrimaryButton label="Ask" onPress={onAskAi} loading={aiLoading} disabled={!aiAvailable} style={styles.goButton} />
-              </View>
-
-              {aiLoading ? <ActivityIndicator color={theme.text} style={styles.aiLoading} /> : null}
-              {aiError ? (
-                <ThemedText type="small" style={{ color: theme.danger }}>
-                  {aiError}
-                </ThemedText>
-              ) : null}
-              {aiAnswer ? (
-                <ThemedView type="backgroundElement" style={styles.answerCard}>
-                  <ThemedText type="default">{aiAnswer}</ThemedText>
-                </ThemedView>
-              ) : null}
+              )}
             </>
           ) : (
             <>
@@ -366,7 +422,7 @@ export default function NavigationScreen() {
                 My Roads
               </ThemedText>
               {myRides === null ? (
-                <ActivityIndicator color={theme.text} style={styles.aiLoading} />
+                <ActivityIndicator color={theme.text} style={styles.spinner} />
               ) : myRides.length === 0 ? (
                 <ThemedText type="small" themeColor="textSecondary">
                   Record a ride and it&rsquo;ll show up here as a line on the map.
@@ -392,9 +448,6 @@ export default function NavigationScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  map: {
-    height: 280,
-  },
   modeSwitcher: {
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.three,
@@ -403,31 +456,8 @@ const styles = StyleSheet.create({
     padding: Spacing.four,
     gap: Spacing.two,
   },
-  row: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-  },
-  input: {
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
-    fontSize: 16,
-  },
-  flexInput: {
-    flex: 1,
-  },
-  goButton: {
-    paddingHorizontal: Spacing.four,
-  },
-  sectionLabel: {
-    marginTop: Spacing.four,
-  },
-  aiLoading: {
+  spinner: {
     marginVertical: Spacing.two,
-  },
-  answerCard: {
-    borderRadius: Spacing.three,
-    padding: Spacing.three,
   },
   routeSummary: {
     borderRadius: Spacing.three,

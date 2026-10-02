@@ -5,7 +5,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 import type { Db } from './db.js';
 import { sendError } from './errors.js';
+import type { GoogleMaps } from './maps.js';
 import { authRoutes } from './routes/auth.js';
+import { mapsRoutes, type MapsCaps } from './routes/maps.js';
 import { mediaRoutes } from './routes/media.js';
 import { syncRoutes } from './routes/sync.js';
 import type { MediaStore } from './storage.js';
@@ -18,6 +20,9 @@ export type AppOptions = {
   media?: MediaStore | null;
   mediaUserQuotaBytes?: number;
   mediaTotalQuotaBytes?: number;
+  /** Google place search and routing; null makes the app use Apple's maps. */
+  google?: GoogleMaps | null;
+  mapsCaps?: MapsCaps;
 };
 
 /**
@@ -96,6 +101,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     media,
     userQuotaBytes: options.mediaUserQuotaBytes ?? 1024 * 1024 * 1024,
     totalQuotaBytes: options.mediaTotalQuotaBytes ?? 4 * 1024 * 1024 * 1024,
+  });
+  await app.register(mapsRoutes, {
+    prefix: '/maps',
+    db: options.db,
+    google: options.google ?? null,
+    caps: options.mapsCaps ?? { routes: 9000, autocomplete: 9000, placeDetails: 9000 },
   });
 
   return app;
