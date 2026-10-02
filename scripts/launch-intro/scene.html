@@ -204,15 +204,14 @@ composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
 // ---------- choreography ----------
-const T_GO = 0.45, ACC = 15, VMAX = 22;
+// A rolling wheelie and the landing; the app takes over with tyre smoke from there.
+const T_GO = 0.45, ROLL = 0.85, ROLL_V = 3.2, T_LAND = 1.21;
 function rideS(t) {
-  if (t <= T_GO) return 0;
-  const tau = t - T_GO, tv = VMAX / ACC;
-  return tau < tv ? 0.5 * ACC * tau * tau : 0.5 * ACC * tv * tv + VMAX * (tau - tv);
+  const u = clamp((t - T_GO) / ROLL, 0, 1);
+  return ((ROLL_V * ROLL) / Math.PI) * (1 - Math.cos(Math.PI * u));
 }
-const speed = (t) => (t <= T_GO ? 0 : Math.min(ACC * (t - T_GO), VMAX));
 function wheelieDeg(t) {
-  const up0 = T_GO, up1 = T_GO + 0.27, down0 = T_GO + 0.5, down1 = T_GO + 0.76;
+  const up0 = T_GO, up1 = T_GO + 0.27, down0 = T_GO + 0.5, down1 = T_LAND;
   if (t < up0) return 0;
   if (t < up1) return 22 * easeOutCubic((t - up0) / (up1 - up0));
   if (t < down0) return 22 + 1.5 * Math.sin(((t - up1) / (down0 - up1)) * Math.PI);
@@ -225,10 +224,7 @@ const KEYS = [
   { t: 0.0, az: 90, el: 0, dist: 92, fov: 16, look: 0, h: 0.6 },
   { t: 0.12, az: 90, el: 0, dist: 92, fov: 16, look: 0, h: 0.6 },
   { t: 0.72, az: 54, el: 6, dist: 6.4, fov: 44, look: 0.1, h: 0.6 },
-  { t: 1.15, az: 80, el: 5, dist: 7.4, fov: 46, look: 0.3, h: 0.58 },
-  { t: 1.75, az: 150, el: 24, dist: 9.5, fov: 50, look: 1.5, h: 0.6 },
-  { t: 2.4, az: 176, el: 33, dist: 12, fov: 52, look: 12, h: 0.6 },
-  { t: 3.1, az: 180, el: 36, dist: 17, fov: 52, look: 18, h: 0.6 },
+  { t: 1.45, az: 68, el: 5, dist: 5.8, fov: 44, look: 0, h: 0.58 },
 ];
 function camAt(t) {
   const k = KEYS;
@@ -249,10 +245,9 @@ function camAt(t) {
   }
   return out;
 }
-const smoothPsi = (s) => { let acc = 0; for (let j = 0; j < 12; j++) acc += roadAt(s - j * 0.9).psi; return acc / 12; };
 const LANE = 1.4;
 
-window.renderAt = function (t, quality = 0.95) {
+function pose(t) {
   const env = smooth(0.06, 0.5, t);
   const lamp = smooth(0.2, 0.32, t);
   // environment fade-in
@@ -268,21 +263,23 @@ window.renderAt = function (t, quality = 0.95) {
   warmRim.intensity = 90 * env;
   beam.intensity = 260 * lamp;
   lampMat.emissiveIntensity = 0.3 + 5 * lamp;
-  tailMat.emissiveIntensity = 0.25 + 0.9 * lamp;
-  tailGlow.intensity = 0.45 * lamp;
+  // the brake light comes on hard for the burnout
+  tailMat.emissiveIntensity = 0.25 + 0.9 * lamp + 2.2 * smooth(T_LAND - 0.05, T_LAND + 0.05, t);
+  tailGlow.intensity = 0.45 * lamp + 1.6 * smooth(T_LAND - 0.05, T_LAND + 0.05, t);
   bike.tft.emissiveIntensity = 1.4 * lamp;
 
   // bike pose
-  const s = rideS(t), v = speed(t);
+  const s = rideS(t);
   const r = roadAt(s);
   const fwd = new THREE.Vector3(Math.cos(r.psi), 0, -Math.sin(r.psi));
   const right = new THREE.Vector3(Math.sin(r.psi), 0, Math.cos(r.psi));
   bikeRoot.position.set(r.x, 0, r.z).addScaledVector(right, LANE);
   bikeRoot.rotation.y = r.psi;
-  const kappa = (roadAt(s + 2.5).psi - roadAt(s + 0.5).psi) / 2.0;
-  leanG.rotation.x = clamp(-kappa * 3.2, -0.72, 0.72) * smooth(2, 9, v);
+  leanG.rotation.x = 0;
   pivot.rotation.z = THREE.MathUtils.degToRad(wheelieDeg(t));
-  rearWheel.rotation.z = -s / R_REAR;
+  // the rear tyre spins up for the burnout while the front stays put
+  const burn = Math.max(0, t - T_LAND);
+  rearWheel.rotation.z = -s / R_REAR - 55 * burn * burn - 30 * burn;
   frontWheel.rotation.z = -s / R_FRONT * (1 - 0.35 * smooth(0, 10, wheelieDeg(t)));
 
   // lights that follow the bike
@@ -296,22 +293,33 @@ window.renderAt = function (t, quality = 0.95) {
 
   // camera
   const c = camAt(t);
-  const cpsi = smoothPsi(s);
-  const cf = new THREE.Vector3(Math.cos(cpsi), 0, -Math.sin(cpsi));
-  const cr = new THREE.Vector3(Math.sin(cpsi), 0, Math.cos(cpsi));
   const az = THREE.MathUtils.degToRad(c.az), el = THREE.MathUtils.degToRad(c.el);
   const anchor = bp.clone().add(new THREE.Vector3(0, c.h, 0));
-  const tgt = anchor.clone().addScaledVector(cf, c.look);
+  const tgt = anchor.clone().addScaledVector(fwd, c.look);
   camera.position.copy(anchor)
-    .addScaledVector(cf, c.dist * Math.cos(el) * Math.cos(az))
-    .addScaledVector(cr, c.dist * Math.cos(el) * Math.sin(az))
+    .addScaledVector(fwd, c.dist * Math.cos(el) * Math.cos(az))
+    .addScaledVector(right, c.dist * Math.cos(el) * Math.sin(az))
     .add(new THREE.Vector3(0, c.dist * Math.sin(el), 0));
   camera.fov = c.fov;
   camera.updateProjectionMatrix();
   camera.lookAt(tgt);
+}
 
+window.renderAt = function (t, quality = 0.95) {
+  pose(t);
+  camera.layers.set(0);
   composer.render();
   return renderer.domElement.toDataURL(quality === 'png' ? 'image/png' : 'image/jpeg', quality === 'png' ? undefined : quality);
+};
+// Where the rear tyre meets the road on screen at time t (0..1 from the top-left), for the app's smoke.
+window.rearTyreOnScreen = function (t) {
+  pose(t);
+  scene.updateMatrixWorld(true);
+  camera.updateMatrixWorld();
+  const p = new THREE.Vector3(-WB / 2 - 0.1, 0.05, 0);
+  body.localToWorld(p);
+  p.project(camera);
+  return { x: (p.x + 1) / 2, y: (1 - p.y) / 2 };
 };
 window.sceneReady = true;
 </script>
