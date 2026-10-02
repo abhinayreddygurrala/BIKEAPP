@@ -15,6 +15,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { buildSportBike, WB, R_REAR, R_FRONT } from './bike.js';
 
 const q = new URLSearchParams(location.search);
 const W = +(q.get('w') || 1080), H = +(q.get('h') || 2346);
@@ -55,149 +56,18 @@ scene.environmentIntensity = 0.55;
 
 const camera = new THREE.PerspectiveCamera(16, W / H, 0.1, 3000);
 
-// ---------- materials ----------
-const paint = new THREE.MeshPhysicalMaterial({ color: '#FF5A1F', metalness: 0.2, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06 });
-const paintDark = new THREE.MeshPhysicalMaterial({ color: '#E8401A', metalness: 0.2, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.1 });
-const frameMat = new THREE.MeshPhysicalMaterial({ color: '#E8401A', metalness: 0.3, roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.15 });
-const rubber = new THREE.MeshStandardMaterial({ color: '#0f0f11', metalness: 0, roughness: 0.82 });
-const chrome = new THREE.MeshStandardMaterial({ color: '#e6e6ea', metalness: 1, roughness: 0.1 });
-const alloy = new THREE.MeshStandardMaterial({ color: '#4a4a52', metalness: 0.9, roughness: 0.3 });
-const engineMat = new THREE.MeshStandardMaterial({ color: '#2a2a30', metalness: 0.85, roughness: 0.38 });
-const leather = new THREE.MeshStandardMaterial({ color: '#1c1714', metalness: 0, roughness: 0.7 });
-const lampMat = new THREE.MeshStandardMaterial({ color: '#fff4e0', emissive: new THREE.Color('#fff1d6'), emissiveIntensity: 0 });
-const tailMat = new THREE.MeshStandardMaterial({ color: '#330800', emissive: new THREE.Color('#ff2a1a'), emissiveIntensity: 0 });
-
-// ---------- bike (body coordinates: x forward, y up, z = bike's right; origin on the ground midway between the tyres) ----------
-const WB = 1.45, R = 0.36, TYRE = 0.085;
-function shadowed(o) { o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); return o; }
-function rod(a, b, radius, mat, seg = 16) {
-  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
-  const len = A.distanceTo(B);
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, seg), mat);
-  m.position.copy(A).add(B).multiplyScalar(0.5);
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize());
-  return m;
-}
-function curveTube(points, radius, mat) {
-  const c = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
-  return new THREE.Mesh(new THREE.TubeGeometry(c, 48, radius, 14, false), mat);
-}
-function makeWheel() {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.TorusGeometry(R - TYRE, TYRE, 24, 80), rubber));
-  g.add(new THREE.Mesh(new THREE.TorusGeometry(R - TYRE - 0.03, 0.02, 12, 64), chrome));
-  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.17, 24).rotateX(Math.PI / 2), chrome));
-  const spokeLen = R - TYRE - 0.08;
-  for (let i = 0; i < 12; i++) {
-    const s = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, spokeLen, 6), alloy);
-    s.geometry.translate(0, spokeLen / 2 + 0.05, 0);
-    s.rotation.z = (i / 12) * Math.PI * 2;
-    s.position.z = (i % 2 ? 1 : -1) * 0.025;
-    g.add(s);
-  }
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.008, 48).rotateX(Math.PI / 2), alloy);
-  disc.position.z = -0.075;
-  g.add(disc);
-  return shadowed(g);
-}
-
-const body = new THREE.Group();
-const rearWheel = makeWheel();
-rearWheel.position.set(-WB / 2, R, 0);
-const frontWheel = makeWheel();
-frontWheel.position.set(WB / 2, R, 0);
-body.add(rearWheel, frontWheel);
-
-const HEAD = [WB / 2 - 0.33, 1.06, 0]; // steering head
-// forks
-for (const z of [-0.1, 0.1]) {
-  body.add(rod([WB / 2, R, z], [HEAD[0] + 0.02, HEAD[1] - 0.02, z], 0.026, chrome));
-  body.add(rod([WB / 2 + 0.005, R + 0.06, z], [WB / 2 - 0.07, R + 0.32, z], 0.034, frameMat));
-}
-body.add(rod([HEAD[0] - 0.02, HEAD[1] - 0.1, 0], [HEAD[0] + 0.03, HEAD[1] + 0.06, 0], 0.045, frameMat));
-// headlight
-const lampHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.1, 0.12, 40).rotateZ(Math.PI / 2), chrome);
-lampHousing.position.set(HEAD[0] + 0.16, HEAD[1] - 0.04, 0);
-body.add(lampHousing);
-const lens = new THREE.Mesh(new THREE.CircleGeometry(0.1, 40).rotateY(Math.PI / 2), lampMat);
-lens.position.set(HEAD[0] + 0.222, HEAD[1] - 0.04, 0);
-body.add(lens);
-// handlebar
-body.add(rod([HEAD[0] - 0.02, HEAD[1] + 0.05, -0.08], [HEAD[0] - 0.06, HEAD[1] + 0.17, -0.12], 0.016, chrome));
-body.add(rod([HEAD[0] - 0.02, HEAD[1] + 0.05, 0.08], [HEAD[0] - 0.06, HEAD[1] + 0.17, 0.12], 0.016, chrome));
-body.add(curveTube([[HEAD[0] - 0.12, HEAD[1] + 0.2, -0.4], [HEAD[0] - 0.05, HEAD[1] + 0.17, -0.15], [HEAD[0] - 0.05, HEAD[1] + 0.17, 0.15], [HEAD[0] - 0.12, HEAD[1] + 0.2, 0.4]], 0.016, chrome));
-for (const z of [-0.36, 0.36]) {
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.11, 16).rotateX(Math.PI / 2), rubber);
-  grip.position.set(HEAD[0] - 0.115, HEAD[1] + 0.198, z * 1.03);
-  body.add(grip);
-}
-// tank
-const tank = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 40), paint);
-tank.scale.set(0.36, 0.165, 0.2);
-tank.position.set(0.08, 0.99, 0);
-tank.rotation.z = 0.1;
-body.add(tank);
-const badge = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), chrome);
-badge.scale.set(0.07, 0.03, 0.012);
-badge.position.set(0.12, 0.98, 0.196);
-body.add(badge);
-// seat
-const seat = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.46, 8, 24).rotateZ(Math.PI / 2), leather);
-seat.scale.set(1, 0.85, 1.55);
-seat.position.set(-0.42, 0.95, 0);
-body.add(seat);
-// tail + rear fender
-const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.16, 6, 16).rotateZ(Math.PI / 2 - 0.25), paintDark);
-tail.position.set(-0.74, 0.9, 0);
-body.add(tail);
-const tailLight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.12), tailMat);
-tailLight.position.set(-0.84, 0.88, 0);
-body.add(tailLight);
-const fender = new THREE.Mesh(new THREE.TorusGeometry(R + 0.05, 0.022, 8, 40, 1.5), frameMat);
-fender.rotation.z = 1.2;
-fender.position.copy(rearWheel.position);
-body.add(fender);
-const frontFender = new THREE.Mesh(new THREE.TorusGeometry(R + 0.045, 0.03, 8, 40, 1.4), paintDark);
-frontFender.rotation.z = 0.35;
-frontFender.position.copy(frontWheel.position);
-body.add(frontFender);
-// frame
-body.add(rod([HEAD[0], HEAD[1] - 0.04, 0], [-0.62, 0.86, 0], 0.03, frameMat));
-body.add(rod([HEAD[0] - 0.02, HEAD[1] - 0.08, 0], [0.18, 0.3, 0], 0.03, frameMat));
-body.add(rod([0.18, 0.3, 0], [-0.3, 0.3, 0], 0.03, frameMat));
-body.add(rod([-0.3, 0.3, 0], [-0.36, 0.88, 0], 0.03, frameMat));
-for (const z of [-0.11, 0.11]) {
-  body.add(rod([-0.24, 0.4, z], [-WB / 2, R, z], 0.028, frameMat));
-  body.add(rod([-0.5, 0.42, z], [-0.58, 0.86, z], 0.024, chrome));
-  body.add(rod([-0.5, 0.42, z], [-0.58, 0.86, z], 0.034, paintDark).translateY(0.0));
-}
-// engine
-const block = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.3, 0.26), engineMat);
-block.position.set(-0.03, 0.48, 0);
-body.add(block);
-for (let i = 0; i < 5; i++) {
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.3 - i * 0.02, 0.014, 0.3), alloy);
-  fin.position.set(0.05, 0.66 + i * 0.03, 0);
-  fin.rotation.z = -0.25;
-  body.add(fin);
-}
-const cover = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.3, 40).rotateX(Math.PI / 2), chrome);
-cover.position.set(-0.08, 0.42, 0);
-body.add(cover);
-// exhaust (right side)
-body.add(curveTube([[0.14, 0.62, 0.1], [0.27, 0.42, 0.15], [0.12, 0.24, 0.19], [-0.25, 0.3, 0.21], [-0.42, 0.36, 0.21]], 0.03, chrome));
-body.add(rod([-0.4, 0.35, 0.21], [-0.86, 0.5, 0.21], 0.05, chrome, 28));
-shadowed(body);
-
-// headlight beam
-const beam = new THREE.SpotLight('#fff1d6', 0, 70, 0.42, 0.55, 1.6);
-beam.position.set(HEAD[0] + 0.24, HEAD[1] - 0.04, 0);
+// ---------- bike ----------
+const bike = buildSportBike({ anisotropy: renderer.capabilities.getMaxAnisotropy() });
+const { body, rearWheel, frontWheel } = bike;
+const lampMat = bike.led, tailMat = bike.tail;
+const beam = new THREE.SpotLight('#f2f6ff', 0, 70, 0.42, 0.55, 1.6);
+beam.position.copy(bike.headlight);
 const beamTarget = new THREE.Object3D();
 beamTarget.position.set(14, -1.2, 0);
 body.add(beam, beamTarget);
 beam.target = beamTarget;
 const tailGlow = new THREE.PointLight('#ff2a1a', 0, 3, 2);
-tailGlow.position.set(-0.9, 0.88, 0);
+tailGlow.position.copy(bike.tailLight);
 body.add(tailGlow);
 
 // rig: position/heading → lean → wheelie pivot (rear tyre) → body
@@ -344,21 +214,21 @@ const speed = (t) => (t <= T_GO ? 0 : Math.min(ACC * (t - T_GO), VMAX));
 function wheelieDeg(t) {
   const up0 = T_GO, up1 = T_GO + 0.27, down0 = T_GO + 0.5, down1 = T_GO + 0.76;
   if (t < up0) return 0;
-  if (t < up1) return 27 * easeOutCubic((t - up0) / (up1 - up0));
-  if (t < down0) return 27 + 1.5 * Math.sin(((t - up1) / (down0 - up1)) * Math.PI);
-  if (t < down1) return 27 * (1 - easeInOutCubic((t - down0) / (down1 - down0)));
+  if (t < up1) return 22 * easeOutCubic((t - up0) / (up1 - up0));
+  if (t < down0) return 22 + 1.5 * Math.sin(((t - up1) / (down0 - up1)) * Math.PI);
+  if (t < down1) return 22 * (1 - easeInOutCubic((t - down0) / (down1 - down0)));
   const b = t - down1;
   return b < 0.22 ? -1.8 * Math.sin((b / 0.22) * Math.PI) : 0;
 }
 // Camera keys, relative to the bike: az 0 = in front, 90 = its right side, 180 = behind.
 const KEYS = [
-  { t: 0.0, az: 90, el: 0, dist: 101, fov: 16, look: 0, h: 0.71 },
-  { t: 0.12, az: 90, el: 0, dist: 101, fov: 16, look: 0, h: 0.71 },
-  { t: 0.95, az: 36, el: 8, dist: 5.8, fov: 50, look: 0.3, h: 0.7 },
-  { t: 1.4, az: 105, el: 10, dist: 7.8, fov: 52, look: 0.4, h: 0.75 },
-  { t: 1.85, az: 172, el: 12, dist: 7.0, fov: 56, look: 2.2, h: 0.85 },
-  { t: 2.45, az: 180, el: 11, dist: 7.6, fov: 56, look: 6, h: 0.9 },
-  { t: 3.1, az: 180, el: 10, dist: 15, fov: 54, look: 6, h: 0.9 },
+  { t: 0.0, az: 90, el: 0, dist: 92, fov: 16, look: 0, h: 0.6 },
+  { t: 0.12, az: 90, el: 0, dist: 92, fov: 16, look: 0, h: 0.6 },
+  { t: 0.72, az: 54, el: 6, dist: 6.4, fov: 44, look: 0.1, h: 0.6 },
+  { t: 1.15, az: 80, el: 5, dist: 7.4, fov: 46, look: 0.3, h: 0.58 },
+  { t: 1.75, az: 150, el: 24, dist: 9.5, fov: 50, look: 1.5, h: 0.6 },
+  { t: 2.4, az: 176, el: 33, dist: 12, fov: 52, look: 12, h: 0.6 },
+  { t: 3.1, az: 180, el: 36, dist: 17, fov: 52, look: 18, h: 0.6 },
 ];
 function camAt(t) {
   const k = KEYS;
@@ -400,6 +270,7 @@ window.renderAt = function (t, quality = 0.95) {
   lampMat.emissiveIntensity = 0.3 + 5 * lamp;
   tailMat.emissiveIntensity = 0.25 + 0.9 * lamp;
   tailGlow.intensity = 0.45 * lamp;
+  bike.tft.emissiveIntensity = 1.4 * lamp;
 
   // bike pose
   const s = rideS(t), v = speed(t);
@@ -411,8 +282,8 @@ window.renderAt = function (t, quality = 0.95) {
   const kappa = (roadAt(s + 2.5).psi - roadAt(s + 0.5).psi) / 2.0;
   leanG.rotation.x = clamp(-kappa * 3.2, -0.72, 0.72) * smooth(2, 9, v);
   pivot.rotation.z = THREE.MathUtils.degToRad(wheelieDeg(t));
-  rearWheel.rotation.z = -s / R;
-  frontWheel.rotation.z = -s / R * (1 - 0.35 * smooth(0, 10, wheelieDeg(t)));
+  rearWheel.rotation.z = -s / R_REAR;
+  frontWheel.rotation.z = -s / R_FRONT * (1 - 0.35 * smooth(0, 10, wheelieDeg(t)));
 
   // lights that follow the bike
   const bp = bikeRoot.position;

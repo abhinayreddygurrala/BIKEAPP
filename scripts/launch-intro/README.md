@@ -1,6 +1,6 @@
 # Launch intro video
 
-`assets/video/launch-intro.mp4` is rendered from `scene.html`, a three.js scene: the bike starts where the splash logo is, does a wheelie, then rides off through twisty roads. `src/components/ui/LaunchIntro.tsx` plays it at launch.
+`assets/video/launch-intro.mp4` is rendered from `scene.html`, a three.js scene with the sport bike from `bike.js` (built in code, no third-party model). The bike starts where the splash logo is and pops a wheelie, filmed from a low front-quarter angle and then a side tracking shot. A rising drone shot then follows it through twisty roads. `src/components/ui/LaunchIntro.tsx` plays it at launch.
 
 Re-render it whenever the splash logo, its size (`imageWidth` in `app.config.ts`) or the splash colour changes, because the first frame has to match the splash exactly.
 
