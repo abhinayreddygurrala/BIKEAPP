@@ -1,16 +1,16 @@
 # Odomap
 
-An iOS motorcycle riding companion app — GPS ride tracking with lean-angle and G-force telemetry, a maintenance and fuel log, expense tracking, and an on-device AI trip planner. Works fully on the phone, even offline; an optional free account saves everything to the cloud automatically.
+An iOS motorcycle riding companion app — GPS ride tracking with lean-angle and G-force telemetry, a maintenance and fuel log, expense tracking, and scenic route planning. Needs a free account (once signed in it works offline too), and everything saves to the cloud automatically.
 
-Stack: Expo (TypeScript, Expo Router) + local SQLite (`expo-sqlite`) + Apple's on-device Foundation Models for AI trip planning. Optional accounts and cloud saving come from a small Fastify + SQLite server in `server/` (on a free Google Cloud VM), with photos and receipts in Google Cloud Storage.
+Stack: Expo (TypeScript, Expo Router) + local SQLite (`expo-sqlite`) + Apple's on-device Foundation Models for receipt scanning. Optional accounts and cloud saving come from a small Fastify + SQLite server in `server/` (on a free Google Cloud VM), with photos and receipts in Google Cloud Storage.
 
 ## Features
 
 - **Ride tracking** — route, distance, speed, elevation, lean angle, peak lateral G, curve count, and acceleration/drag-strip stats (0-60, 0-100, 1/8 and 1/4 mile), all computed from phone GPS + motion sensors. Recording survives the screen locking or the app being backgrounded.
 - **Garage** — one or more bikes, each with a make/model picker, photo, and running odometer.
 - **Maintenance** — service history with photo/PDF attachments, a fuel log with economy tracking, an expense log (insurance, registration, accessories, loan payments), generic "suggested" service intervals for anything never logged, and local due-date/mileage notifications for anything due soon or overdue.
-- **Navigation** — search a destination and hand off to Apple Maps for turn-by-turn; an on-device AI trip planner (Apple Intelligence, when available on the phone) for scenic-route and points-of-interest questions; a scenic-vs-fastest route comparison using the public OSRM routing API (no API key, no billing, rate-limited "fair use" only).
-- **Cloud save** — with an optional free account, everything (bikes, rides with their GPS tracks, maintenance, expenses, fuel, settings, photos and receipts) saves to the cloud automatically a few seconds after each change; on a new phone, sign in and restore. Without an account, data stays only on the phone.
+- **Navigation** — place search and scenic-vs-fastest routes from Google (Places + Routes, called by the server so the key never ships in the app, capped under Google's free monthly allowance), falling back to Apple's MapKit search and directions (`modules/odomap-apple-maps`, shown on an Apple map as Apple requires) when Google is unavailable; the chosen route hands off to Google Maps or Apple Maps for voice turn-by-turn (the other app can also be opened, with just the place names).
+- **Accounts and cloud save** — a free account is required (no guest mode). Everything (bikes, rides with their GPS tracks, maintenance, expenses, fuel, settings, photos and receipts) saves to the cloud automatically a few seconds after each change. Signing out saves first, then clears the phone; signing in on an empty phone restores everything automatically.
 
 ## Setup
 
@@ -39,7 +39,7 @@ Notes for a free (non-paid) Apple ID:
 - A free/personal signing team's provisioning certificate expires after 7 days and needs reinstalling.
 - A free/personal team **cannot** provision the Push Notifications entitlement. `expo-notifications` adds that entitlement automatically during prebuild even though this app only ever schedules *local* notifications, which don't need it — `plugins/withIosSceneDelegate.js`'s sibling fix in `app.config.ts` (the `withEntitlementsPlist` call) strips it back out. If notifications ever need real remote push in the future, that entitlement — and a paid Apple Developer Program membership — comes back into play.
 
-The iOS Simulator has no real GPS hardware and no Apple Intelligence — it's fine for a UI smoke test but can't validate background location tracking or the AI trip planner. Test both on a real device.
+The iOS Simulator has no real GPS hardware and no Apple Intelligence — it's fine for a UI smoke test but can't validate background location tracking or receipt scanning. Test both on a real device.
 
 ### iOS 27: the SceneDelegate gotcha
 
