@@ -15,6 +15,9 @@ const config: ExpoConfig = {
     // Kept from the app's old name on purpose: changing it makes iOS treat
     // Odomap as a different app (and the Google Maps key is locked to it).
     bundleIdentifier: "com.abhinaygurrala.bikeapp",
+    // The free personal team. Switch this to the paid Apple Developer
+    // Program team ID once enrolled, or App Store builds can't be signed.
+    appleTeamId: "DWBAYP8K69",
     buildNumber: "1",
     icon: "./assets/expo.icon",
     supportsTablet: false,
@@ -58,7 +61,9 @@ const config: ExpoConfig = {
       },
     ],
     "expo-sqlite",
-    "expo-secure-store",
+    // Odomap never uses Face ID (no requireAuthentication), so drop the
+    // plugin's vague default Face ID permission message.
+    ["expo-secure-store", { faceIDPermission: false }],
     "expo-sharing",
     [
       "expo-location",
@@ -66,6 +71,8 @@ const config: ExpoConfig = {
         locationWhenInUsePermission:
           "Odomap uses your location to record your ride's route, distance, and speed while the app is open.",
         locationAlwaysAndWhenInUsePermission:
+          "Odomap needs background location access to keep recording your ride's route, distance, and speed even when your phone is locked or the app is in the background.",
+        locationAlwaysPermission:
           "Odomap needs background location access to keep recording your ride's route, distance, and speed even when your phone is locked or the app is in the background.",
         isAndroidBackgroundLocationEnabled: true,
       },
@@ -79,8 +86,12 @@ const config: ExpoConfig = {
     [
       "expo-image-picker",
       {
-        photosPermission: "Odomap uses your photo library to set a profile picture.",
-        cameraPermission: "Odomap uses your camera to take a profile picture.",
+        photosPermission:
+          "Odomap uses your photo library to add photos of you, your bikes, and your maintenance receipts.",
+        cameraPermission:
+          "Odomap uses your camera to take photos of you, your bikes, and your maintenance receipts.",
+        // Odomap only picks photos, never video, so it doesn't need the mic.
+        microphonePermission: false,
       },
     ],
     [
