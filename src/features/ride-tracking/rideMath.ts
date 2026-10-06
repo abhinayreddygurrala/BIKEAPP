@@ -40,6 +40,9 @@ export const MAX_PLAUSIBLE_LEAN_DEG = 60;
 // Lean and wheelies only count above this speed (~9 mph), so picking the
 // phone up at a stop can't set a record.
 export const MIN_MOVING_SPEED_MPS = 4;
+// About a tenth of a mile. A recording shorter than this almost always
+// means Start was tapped by mistake or the ride never got going.
+export const SHORT_RIDE_METERS = 160;
 
 /**
  * Sideways force in a steady turn, from lean angle alone: a bike balances

@@ -8,6 +8,7 @@ import {
   updateLocalRideStats,
   type LocalRide,
 } from '@/features/ride-tracking/rideLocalDb';
+import { SHORT_RIDE_METERS } from '@/features/ride-tracking/rideMath';
 import { uuidv4 } from '@/lib/uuid';
 
 export type RideSummary = LocalRide;
@@ -35,6 +36,23 @@ export async function getRideDetail(rideId: string): Promise<RideSummary | null>
 /** Delete a ride from local storage. */
 export async function deleteRide(ride: Pick<RideSummary, 'id'>) {
   await deleteLocalRide(ride.id);
+}
+
+export async function listRidesForBike(bikeId: string): Promise<RideSummary[]> {
+  return (await listRides()).filter((r) => r.bike_id === bikeId);
+}
+
+// Stopping a ride shorter than SHORT_RIDE_METERS has asked "keep or discard?"
+// since this date; recordings from before it never got the choice.
+const SHORT_RIDE_QUESTION_SINCE = '2026-10-06T00:00:00.000Z';
+
+/** Deletes those early short recordings, nearly all Start tapped by mistake. Safe to run any time. */
+export async function deleteEarlyShortRecordings() {
+  for (const ride of await listRides()) {
+    if ((ride.distance_meters ?? 0) < SHORT_RIDE_METERS && ride.started_at < SHORT_RIDE_QUESTION_SINCE) {
+      await deleteRide(ride);
+    }
+  }
 }
 
 /** Edit a ride's title and/or bike. Distance/speed/route are GPS-derived and intentionally not editable. */

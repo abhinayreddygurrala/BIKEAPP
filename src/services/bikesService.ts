@@ -13,6 +13,7 @@ import { uuidv4 } from '@/lib/uuid';
 import { deleteExpense, listExpenses } from '@/services/expenseService';
 import { deleteFuelLog, listFuelLogs } from '@/services/fuelService';
 import { deleteMaintenanceRecord, listMaintenanceRecords } from '@/services/maintenanceService';
+import { deleteRide, listRidesForBike } from '@/services/ridesService';
 
 // Screens don't need to know about the filename/path convention behind a
 // bike's photo — `photo_url` is computed here from `photo_filename` and is
@@ -77,12 +78,13 @@ export async function removeBikePhoto(bikeId: string): Promise<void> {
 }
 
 /**
- * Removes everything that belongs to a bike — its service records, expenses
- * and fuel logs, with their receipt files. They mean nothing without the bike,
- * and anything left on the phone would also stay in the cloud backup, since
- * auto-save mirrors the phone. Rides are kept: they're the rider's history.
+ * Removes everything that belongs to a bike — its rides, service records,
+ * expenses and fuel logs, with their receipt files. Anything left on the
+ * phone would also stay in the cloud backup, since auto-save mirrors the
+ * phone.
  */
 async function deleteBikeData(bikeId: string): Promise<void> {
+  for (const ride of await listRidesForBike(bikeId)) await deleteRide(ride);
   for (const record of await listMaintenanceRecords(bikeId)) await deleteMaintenanceRecord(record);
   for (const expense of await listExpenses(bikeId)) await deleteExpense(expense);
   for (const log of await listFuelLogs(bikeId)) await deleteFuelLog(log.id);
@@ -98,8 +100,8 @@ export async function deleteBike(bikeId: string): Promise<void> {
 }
 
 /**
- * Cleans up service records, expenses and fuel logs left behind by bikes
- * deleted before deleteBike removed them too. Safe to run any time a restore
+ * Cleans up rides, service records, expenses and fuel logs left behind by
+ * bikes deleted before deleteBike removed them too. Safe to run any time a restore
  * isn't half-done: a restore writes bikes before anything that points at them.
  */
 export async function deleteOrphanedBikeData(): Promise<void> {
@@ -108,6 +110,8 @@ export async function deleteOrphanedBikeData(): Promise<void> {
     SELECT bike_id FROM maintenance_records_local WHERE bike_id NOT IN (SELECT id FROM bikes_local)
     UNION SELECT bike_id FROM expenses_local WHERE bike_id NOT IN (SELECT id FROM bikes_local)
     UNION SELECT bike_id FROM fuel_logs_local WHERE bike_id NOT IN (SELECT id FROM bikes_local)
+    UNION SELECT bike_id FROM rides_local
+      WHERE status = 'stopped' AND bike_id IS NOT NULL AND bike_id NOT IN (SELECT id FROM bikes_local)
   `);
   for (const { bike_id } of rows) await deleteBikeData(bike_id);
 }

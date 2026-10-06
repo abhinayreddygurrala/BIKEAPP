@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BikePickerSheet } from '@/components/ride/BikePickerSheet';
@@ -22,10 +22,12 @@ import {
   formatDistance,
   formatDuration,
   formatSpeed,
+  SHORT_RIDE_METERS,
   speedUnitLabel,
 } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { getBike } from '@/services/bikesService';
+import { deleteRide } from '@/services/ridesService';
 
 type PermissionStep = 'checking' | 'need-foreground' | 'need-background' | 'foreground-only' | 'ready';
 
@@ -90,14 +92,32 @@ export default function RecordRideScreen() {
     setPermissionStep(result.status === 'granted' ? 'ready' : 'foreground-only');
   };
 
-  const handleStop = async () => {
+  const finishRide = async (keep: boolean) => {
     const finishedRideId = await recorder.stop();
-    if (finishedRideId) {
+    if (finishedRideId && keep) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace({ pathname: '/(app)/ride/[id]', params: { id: finishedRideId } });
     } else {
+      if (finishedRideId) await deleteRide({ id: finishedRideId });
       router.back();
     }
+  };
+
+  // A recording that barely moved is usually Start tapped by mistake, so ask
+  // before it joins the ride history and its totals.
+  const handleStop = () => {
+    if (recorder.stats.distanceMeters >= SHORT_RIDE_METERS) {
+      finishRide(true);
+      return;
+    }
+    Alert.alert(
+      'Keep this ride?',
+      `It’s shorter than ${units === 'imperial' ? '0.1 mi' : '160 m'}.`,
+      [
+        { text: 'Discard', style: 'destructive', onPress: () => finishRide(false) },
+        { text: 'Keep', style: 'cancel', onPress: () => finishRide(true) },
+      ]
+    );
   };
 
   const handleStart = () => {

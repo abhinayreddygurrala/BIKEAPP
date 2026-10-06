@@ -175,9 +175,15 @@ export default function BikeDetailScreen() {
   const title = hasNickname ? bike.name : derivedName || bike.name;
 
   const onDelete = () => {
+    const whatGoes =
+      rides.length === 0
+        ? 'Its service records'
+        : rides.length === 1
+          ? 'Its 1 ride, service records'
+          : `All ${rides.length} of its rides, its service records`;
     Alert.alert(
       `Delete ${title}?`,
-      'Its service records, expenses and fuel logs are deleted too, from this phone and your cloud backup. Your rides on it stay in your ride history. This can’t be undone.',
+      `${whatGoes}, expenses and fuel logs are deleted too, from this phone and your cloud backup. This can’t be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {

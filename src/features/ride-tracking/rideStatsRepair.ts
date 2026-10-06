@@ -1,10 +1,11 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { lateralGForLean, MAX_PLAUSIBLE_LEAN_DEG, MAX_RUN_SECONDS } from '@/features/ride-tracking/rideMath';
-
-// A recorded ride that covered less than this never really left, so any
-// lean or wheelie it saved came from handling the phone.
-const MIN_RIDDEN_DISTANCE_M = 160;
+import {
+  lateralGForLean,
+  MAX_PLAUSIBLE_LEAN_DEG,
+  MAX_RUN_SECONDS,
+  SHORT_RIDE_METERS,
+} from '@/features/ride-tracking/rideMath';
 
 const RUN_COLUMNS: [column: string, maxSeconds: number][] = [
   ['accel_0_60_seconds', MAX_RUN_SECONDS.accel0To60],
@@ -37,7 +38,8 @@ export async function repairRideStats(db: SQLiteDatabase): Promise<void> {
          AND (lean_max_deg > 0 OR lean_avg_deg > 0 OR curve_count > 0 OR wheelie_count > 0
               OR longest_wheelie_seconds > 0 OR steepest_lean_left_deg > 0 OR steepest_lean_right_deg > 0
               OR peak_lateral_g IS NOT NULL)`,
-      [MIN_RIDDEN_DISTANCE_M, MAX_PLAUSIBLE_LEAN_DEG, MAX_PLAUSIBLE_LEAN_DEG, MAX_PLAUSIBLE_LEAN_DEG]
+      // A ride that never really left can't have leaned: that was the phone being handled.
+      [SHORT_RIDE_METERS, MAX_PLAUSIBLE_LEAN_DEG, MAX_PLAUSIBLE_LEAN_DEG, MAX_PLAUSIBLE_LEAN_DEG]
     );
 
     for (const [column, maxSeconds] of RUN_COLUMNS) {
