@@ -15,10 +15,10 @@ const config: ExpoConfig = {
     // Kept from the app's old name on purpose: changing it makes iOS treat
     // Odomap as a different app (and the Google Maps key is locked to it).
     bundleIdentifier: "com.abhinaygurrala.bikeapp",
-    // The free personal team. Switch this to the paid Apple Developer
-    // Program team ID once enrolled, or App Store builds can't be signed.
+    // The Apple Developer Program team (enrolling kept the same team ID).
     appleTeamId: "DWBAYP8K69",
-    buildNumber: "1",
+    // Bump for every upload to App Store Connect.
+    buildNumber: "2",
     icon: "./assets/expo.icon",
     supportsTablet: false,
     infoPlist: {
