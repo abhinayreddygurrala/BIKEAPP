@@ -21,6 +21,35 @@ const MPS_130MPH = 58.1152;
 const MPS_150MPH = 67.056;
 const EIGHTH_MILE_M = 201.168;
 const QUARTER_MILE_M = 402.336;
+// A run that slows down by more than this below its own top speed was a
+// rider cruising through traffic, not a launch, so it stops counting.
+const RUN_BREAK_DROP_MPS = 2.2; // ~5 mph
+// Slower than these isn't a launch either, just riding away from a light.
+export const MAX_RUN_SECONDS = {
+  accel0To60: 20,
+  accel0To100: 40,
+  accel0To150: 60,
+  rolling60To130: 40,
+  dragEighthMile: 15,
+  dragQuarterMile: 25,
+};
+
+// No street bike leans further than this (MotoGP bikes top out around 64°).
+// A reading past it means the phone was being handled, not ridden.
+export const MAX_PLAUSIBLE_LEAN_DEG = 60;
+// Lean and wheelies only count above this speed (~9 mph), so picking the
+// phone up at a stop can't set a record.
+export const MIN_MOVING_SPEED_MPS = 4;
+
+/**
+ * Sideways force in a steady turn, from lean angle alone: a bike balances
+ * where tan(lean) = lateral acceleration / g. The phone's accelerometer
+ * can't measure this directly on a handlebar mount, since engine vibration
+ * and bumps swamp it.
+ */
+export function lateralGForLean(leanDeg: number) {
+  return Math.tan((Math.min(leanDeg, MAX_PLAUSIBLE_LEAN_DEG) * Math.PI) / 180);
+}
 
 export function haversineDistanceMeters(
   a: { lat: number; lng: number },
@@ -56,6 +85,12 @@ export type RideStats = {
   dragQuarterMileSeconds: number | null;
 };
 
+/** The better of a ride's best time so far and a new run, ignoring runs too slow to be a launch. */
+function fasterRun(best: number | null, elapsed: number, maxSeconds: number) {
+  if (elapsed > maxSeconds) return best;
+  return best == null || elapsed < best ? elapsed : best;
+}
+
 export function computeRideStats(points: LocalRidePoint[]): RideStats {
   const usable = points.filter((p) => p.accuracy_m == null || p.accuracy_m <= MAX_ACCURACY_M);
 
@@ -66,6 +101,7 @@ export function computeRideStats(points: LocalRidePoint[]): RideStats {
   let movingSeconds = 0;
   let stoppedSeconds = 0;
   let lastStoppedAtMs: number | null = null;
+  let runTopSpeedMps = 0;
   let crossed60ThisRun = false;
   let crossed100ThisRun = false;
   let crossed150ThisRun = false;
@@ -108,12 +144,14 @@ export function computeRideStats(points: LocalRidePoint[]): RideStats {
     if (speedMps > maxSpeedMps) maxSpeedMps = speedMps;
 
     // "From a complete stop" only — matches how dedicated acceleration
-    // timers work, and avoids counting a rolling-start as a 0-60.
+    // timers work, and avoids counting a rolling-start as a 0-60. The run
+    // also has to keep accelerating: easing off ends it until the next stop.
     const currMs = new Date(curr.recorded_at).getTime();
     const prevSpeedMps = prev.speed_mps ?? 0;
     if (speedMps < STOPPED_SPEED_MPS) {
       stoppedSeconds += dt;
       lastStoppedAtMs = currMs;
+      runTopSpeedMps = 0;
       crossed60ThisRun = false;
       crossed100ThisRun = false;
       crossed150ThisRun = false;
@@ -121,32 +159,33 @@ export function computeRideStats(points: LocalRidePoint[]): RideStats {
       crossedEighthThisRun = false;
       crossedQuarterThisRun = false;
     } else if (lastStoppedAtMs != null) {
-      distanceSinceStopM += segmentDistance;
+      runTopSpeedMps = Math.max(runTopSpeedMps, speedMps);
+      if (speedMps < runTopSpeedMps - RUN_BREAK_DROP_MPS) {
+        lastStoppedAtMs = null;
+      } else {
+        distanceSinceStopM += segmentDistance;
+        const elapsed = (currMs - lastStoppedAtMs) / 1000;
 
-      if (!crossed60ThisRun && speedMps >= MPS_60MPH) {
-        const elapsed = (currMs - lastStoppedAtMs) / 1000;
-        if (accel0To60Seconds == null || elapsed < accel0To60Seconds) accel0To60Seconds = elapsed;
-        crossed60ThisRun = true;
-      }
-      if (!crossed100ThisRun && speedMps >= MPS_100MPH) {
-        const elapsed = (currMs - lastStoppedAtMs) / 1000;
-        if (accel0To100Seconds == null || elapsed < accel0To100Seconds) accel0To100Seconds = elapsed;
-        crossed100ThisRun = true;
-      }
-      if (!crossed150ThisRun && speedMps >= MPS_150MPH) {
-        const elapsed = (currMs - lastStoppedAtMs) / 1000;
-        if (accel0To150Seconds == null || elapsed < accel0To150Seconds) accel0To150Seconds = elapsed;
-        crossed150ThisRun = true;
-      }
-      if (!crossedEighthThisRun && distanceSinceStopM >= EIGHTH_MILE_M) {
-        const elapsed = (currMs - lastStoppedAtMs) / 1000;
-        if (dragEighthMileSeconds == null || elapsed < dragEighthMileSeconds) dragEighthMileSeconds = elapsed;
-        crossedEighthThisRun = true;
-      }
-      if (!crossedQuarterThisRun && distanceSinceStopM >= QUARTER_MILE_M) {
-        const elapsed = (currMs - lastStoppedAtMs) / 1000;
-        if (dragQuarterMileSeconds == null || elapsed < dragQuarterMileSeconds) dragQuarterMileSeconds = elapsed;
-        crossedQuarterThisRun = true;
+        if (!crossed60ThisRun && speedMps >= MPS_60MPH) {
+          accel0To60Seconds = fasterRun(accel0To60Seconds, elapsed, MAX_RUN_SECONDS.accel0To60);
+          crossed60ThisRun = true;
+        }
+        if (!crossed100ThisRun && speedMps >= MPS_100MPH) {
+          accel0To100Seconds = fasterRun(accel0To100Seconds, elapsed, MAX_RUN_SECONDS.accel0To100);
+          crossed100ThisRun = true;
+        }
+        if (!crossed150ThisRun && speedMps >= MPS_150MPH) {
+          accel0To150Seconds = fasterRun(accel0To150Seconds, elapsed, MAX_RUN_SECONDS.accel0To150);
+          crossed150ThisRun = true;
+        }
+        if (!crossedEighthThisRun && distanceSinceStopM >= EIGHTH_MILE_M) {
+          dragEighthMileSeconds = fasterRun(dragEighthMileSeconds, elapsed, MAX_RUN_SECONDS.dragEighthMile);
+          crossedEighthThisRun = true;
+        }
+        if (!crossedQuarterThisRun && distanceSinceStopM >= QUARTER_MILE_M) {
+          dragQuarterMileSeconds = fasterRun(dragQuarterMileSeconds, elapsed, MAX_RUN_SECONDS.dragQuarterMile);
+          crossedQuarterThisRun = true;
+        }
       }
     }
 
@@ -158,7 +197,7 @@ export function computeRideStats(points: LocalRidePoint[]): RideStats {
       rollingStartMs = null;
     } else if (rollingStartMs != null && speedMps >= MPS_130MPH) {
       const elapsed = (currMs - rollingStartMs) / 1000;
-      if (rolling60To130Seconds == null || elapsed < rolling60To130Seconds) rolling60To130Seconds = elapsed;
+      rolling60To130Seconds = fasterRun(rolling60To130Seconds, elapsed, MAX_RUN_SECONDS.rolling60To130);
       rollingStartMs = null;
     }
 
@@ -207,6 +246,8 @@ export type CurveRecords = {
   fastestRightKmh: number | null;
   longestLeftM: number | null;
   longestRightM: number | null;
+  /** From the steepest curve's lean (see lateralGForLean), or null with no curves. */
+  peakLateralG: number | null;
 };
 
 /**
@@ -250,6 +291,7 @@ export function computeCurveRecords(events: CurveEvent[], points: LocalRidePoint
     }
   }
 
+  const steepestDeg = Math.max(steepestLeftDeg, steepestRightDeg);
   return {
     curveCount: events.length,
     steepestLeftDeg,
@@ -258,6 +300,7 @@ export function computeCurveRecords(events: CurveEvent[], points: LocalRidePoint
     fastestRightKmh,
     longestLeftM,
     longestRightM,
+    peakLateralG: steepestDeg > 0 ? lateralGForLean(steepestDeg) : null,
   };
 }
 

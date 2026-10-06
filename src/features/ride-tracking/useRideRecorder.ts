@@ -13,6 +13,7 @@ import {
   computeCurveRecords,
   computeRideStats,
   encodeRoutePolyline,
+  MIN_MOVING_SPEED_MPS,
   type RideStats,
 } from '@/features/ride-tracking/rideMath';
 import { RIDE_TRACKING_TASK } from '@/features/ride-tracking/rideTrackingTask';
@@ -22,6 +23,9 @@ import { uuidv4 } from '@/lib/uuid';
 export type RecorderStatus = 'idle' | 'recording' | 'paused' | 'stopped';
 
 const POLL_INTERVAL_MS = 2500;
+// GPS only reports every 10 m of movement, so once the newest fix is older
+// than this (a poll plus a fix interval at walking pace) the bike has stopped.
+const MOVING_FIX_MAX_AGE_MS = 6000;
 
 const EMPTY_STATS: RideStats = {
   distanceMeters: 0,
@@ -65,13 +69,20 @@ export function useRideRecorder() {
   const [stats, setStats] = useState<RideStats>(EMPTY_STATS);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentRef = useRef(0);
-  const lean = useLeanAngleTracker(status === 'recording');
+  const lastFixRef = useRef<{ speedMps: number; atMs: number } | null>(null);
+  const isMoving = useCallback(() => {
+    const fix = lastFixRef.current;
+    return fix != null && fix.speedMps >= MIN_MOVING_SPEED_MPS && Date.now() - fix.atMs < MOVING_FIX_MAX_AGE_MS;
+  }, []);
+  const lean = useLeanAngleTracker(status === 'recording', isMoving);
   // These are stable across renders; `lean` itself is a new object on every
   // sensor update, so callbacks depend on these instead.
   const { reset: resetLean, getCurveEvents, getFinalStats } = lean;
 
   const refreshFromDb = useCallback(async (id: string) => {
     const dbPoints = await getRidePoints(id);
+    const last = dbPoints[dbPoints.length - 1];
+    lastFixRef.current = last?.speed_mps != null ? { speedMps: last.speed_mps, atMs: new Date(last.recorded_at).getTime() } : null;
     setPoints(dbPoints);
     setStats(computeRideStats(dbPoints));
   }, []);
@@ -100,6 +111,7 @@ export function useRideRecorder() {
       const id = uuidv4();
       const startedAt = new Date().toISOString();
       segmentRef.current = 0;
+      lastFixRef.current = null;
       resetLean();
 
       await createLocalRide(id, bikeId, startedAt);
@@ -175,7 +187,7 @@ export function useRideRecorder() {
       longest_curve_right_m: curveRecords.longestRightM,
       wheelie_count: finalLean.wheelieCount,
       longest_wheelie_seconds: finalLean.longestWheelieSeconds,
-      peak_lateral_g: finalLean.peakG,
+      peak_lateral_g: curveRecords.peakLateralG,
     });
     await finalizeLocalRide(rideId, new Date().toISOString(), routePolyline, 'stopped');
     await setActiveRideId(null);

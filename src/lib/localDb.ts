@@ -1,5 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
+import { repairRideStats } from '@/features/ride-tracking/rideStatsRepair';
+
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 // One shared database for every on-device feature (bikes, maintenance, fuel,
@@ -209,6 +211,8 @@ export function getDb() {
           // Column already exists from a previous run — fine.
         }
       }
+
+      await repairRideStats(db);
 
       return db;
     });

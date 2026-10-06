@@ -3,7 +3,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { Easing, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import type { DeviceMotionMeasurement } from 'expo-sensors/build/DeviceMotion';
-import type { CurveEvent } from '@/features/ride-tracking/rideMath';
+import { MAX_PLAUSIBLE_LEAN_DEG, type CurveEvent } from '@/features/ride-tracking/rideMath';
 
 // Loaded via require() inside try/catch, not a static import: expo-router
 // evaluates every screen's module while building the route tree at startup,
@@ -55,7 +55,19 @@ const WHEELIE_ENTER_DEG = 15;
 const WHEELIE_EXIT_DEG = 8;
 const WHEELIE_MIN_DURATION_S = 0.3;
 const WHEELIE_PITCH_SIGN = 1;
-const G = 9.80665;
+// Short enough not to blunt a real lean, long enough that one bump-jolted
+// sample can't become a ride's steepest lean.
+const SMOOTHING_SAMPLES = 3;
+
+/** Roll is reported from -180° to 180°, so a difference can wrap past either end. */
+function wrapDeg(deg: number) {
+  return ((((deg + 180) % 360) + 360) % 360) - 180;
+}
+
+function median(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
 
 // Portrait mount assumes the phone's top-to-bottom axis points along the
 // bike's front-to-back line (see gamma's comment above), so gamma=lean,
@@ -99,11 +111,13 @@ export type FinalLeanStats = {
   curveCount: number;
   wheelieCount: number;
   longestWheelieSeconds: number;
-  peakG: number;
 };
 
-/** Live lean-angle, curve, and wheelie tracking from the device's motion sensors, active only while `active` is true (foreground only — see the migration plan for why background isn't supported). */
-export function useLeanAngleTracker(active: boolean) {
+/**
+ * Live lean-angle, curve, and wheelie tracking from the device's motion sensors, active only while `active` is true (foreground only — see the migration plan for why background isn't supported).
+ * Stats only count while `isMoving()` says the bike is moving: at a stop the phone is often in the rider's hand, and handling it reads as huge leans and wheelies.
+ */
+export function useLeanAngleTracker(active: boolean, isMoving: () => boolean) {
   const [liveStats, setLiveStats] = useState<LiveLeanStats>(EMPTY_LIVE_LEAN_STATS);
   // Live needle position, updated straight from the sensor callback on every
   // sample and consumed via useAnimatedStyle in LeanAngleGauge — bypasses
@@ -118,6 +132,7 @@ export function useLeanAngleTracker(active: boolean) {
   const maxAbsRef = useRef(0);
   const absSumRef = useRef(0);
   const sampleCountRef = useRef(0);
+  const recentLeanRef = useRef<number[]>([]);
 
   // Curve state machine
   const inCurveRef = useRef(false);
@@ -139,12 +154,6 @@ export function useLeanAngleTracker(active: boolean) {
   const wheelieCountRef = useRef(0);
   const longestWheelieRef = useRef(0);
 
-  // Peak G, from the gravity-excluded acceleration vector's magnitude. This
-  // is a simplification — "true" lateral G would isolate just the
-  // side-to-side axis, but which axis that is depends on the exact mount
-  // orientation (same caveat as LEFT_SIGN/WHEELIE_PITCH_SIGN above), so this
-  // tracks overall accel/brake/corner force instead of isolating cornering.
-  const peakGRef = useRef(0);
   // Detected once per activation (ride start or resume-after-pause), not
   // while actively recording. A live listener sounds appealing but is
   // actually wrong here: real hard cornering can tilt the phone far enough
@@ -201,22 +210,39 @@ export function useLeanAngleTracker(active: boolean) {
             return;
           }
 
-          const leanDeg = leanAxisDeg - offsetDegRef.current;
-          const absLean = Math.abs(leanDeg);
-          maxAbsRef.current = Math.max(maxAbsRef.current, absLean);
-          absSumRef.current += absLean;
-          sampleCountRef.current += 1;
+          const rawLeanDeg = wrapDeg(leanAxisDeg - offsetDegRef.current);
 
           // Drives the needle directly on the UI thread. withTiming smooths
           // over the gap between samples instead of snapping, so the needle
           // sweeps rather than ticks even at a 150ms sample rate.
-          leanDegShared.set(withTiming(leanDeg, { duration: UPDATE_INTERVAL_MS, easing: Easing.linear }));
+          leanDegShared.set(withTiming(rawLeanDeg, { duration: UPDATE_INTERVAL_MS, easing: Easing.linear }));
 
-          const roundedAbs = Math.round(absLean);
+          const roundedAbs = Math.round(Math.abs(rawLeanDeg));
           if (roundedAbs !== lastRoundedDegRef.current) {
             lastRoundedDegRef.current = roundedAbs;
             setLiveStats((s) => ({ ...s, currentDegRounded: roundedAbs }));
           }
+
+          const pitchDeg = wrapDeg(pitchAxisDeg - pitchOffsetDegRef.current) * WHEELIE_PITCH_SIGN;
+
+          // Stopped, or tilted further than any bike can lean: the phone is
+          // in someone's hand. Drop any curve or wheelie in progress rather
+          // than save it, and leave every stat alone.
+          if (!isMoving() || Math.abs(rawLeanDeg) > MAX_PLAUSIBLE_LEAN_DEG) {
+            inCurveRef.current = false;
+            inWheelieRef.current = false;
+            recentLeanRef.current = [];
+            return;
+          }
+
+          const recent = recentLeanRef.current;
+          recent.push(rawLeanDeg);
+          if (recent.length > SMOOTHING_SAMPLES) recent.shift();
+          const leanDeg = median(recent);
+          const absLean = Math.abs(leanDeg);
+          maxAbsRef.current = Math.max(maxAbsRef.current, absLean);
+          absSumRef.current += absLean;
+          sampleCountRef.current += 1;
 
           // Curve boundary detection (hysteresis: enter above CURVE_ENTER_DEG,
           // only exit once back below CURVE_EXIT_DEG).
@@ -257,14 +283,7 @@ export function useLeanAngleTracker(active: boolean) {
             }
           }
 
-          const accel = measurement.acceleration;
-          if (accel) {
-            const magnitudeG = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2) / G;
-            peakGRef.current = Math.max(peakGRef.current, magnitudeG);
-          }
-
           // Wheelie boundary detection, same hysteresis shape on the pitch axis.
-          const pitchDeg = (pitchAxisDeg - pitchOffsetDegRef.current) * WHEELIE_PITCH_SIGN;
           if (!inWheelieRef.current && pitchDeg >= WHEELIE_ENTER_DEG) {
             inWheelieRef.current = true;
             wheelieStartMsRef.current = nowMs;
@@ -292,8 +311,9 @@ export function useLeanAngleTracker(active: boolean) {
       pitchCalibrationSamplesRef.current = [];
       inCurveRef.current = false;
       inWheelieRef.current = false;
+      recentLeanRef.current = [];
     };
-  }, [active, leanDegShared]);
+  }, [active, isMoving, leanDegShared]);
 
   const reset = useCallback(() => {
     offsetDegRef.current = null;
@@ -303,6 +323,7 @@ export function useLeanAngleTracker(active: boolean) {
     maxAbsRef.current = 0;
     absSumRef.current = 0;
     sampleCountRef.current = 0;
+    recentLeanRef.current = [];
     inCurveRef.current = false;
     curveCountRef.current = 0;
     steepestLeftRef.current = 0;
@@ -311,7 +332,6 @@ export function useLeanAngleTracker(active: boolean) {
     inWheelieRef.current = false;
     wheelieCountRef.current = 0;
     longestWheelieRef.current = 0;
-    peakGRef.current = 0;
     lastRoundedDegRef.current = 0;
     leanDegShared.set(0);
     setLiveStats(EMPTY_LIVE_LEAN_STATS);
@@ -327,7 +347,6 @@ export function useLeanAngleTracker(active: boolean) {
       curveCount: curveCountRef.current,
       wheelieCount: wheelieCountRef.current,
       longestWheelieSeconds: longestWheelieRef.current,
-      peakG: peakGRef.current,
     }),
     []
   );

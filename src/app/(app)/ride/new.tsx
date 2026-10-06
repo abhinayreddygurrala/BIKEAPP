@@ -10,12 +10,15 @@ import { KEYBOARD_DONE_ACCESSORY_ID, KeyboardDoneAccessory } from '@/components/
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import { Spacing } from '@/constants/theme';
 import { useSettings } from '@/features/settings/SettingsContext';
-import { distanceToMeters, distanceUnitLabel } from '@/features/ride-tracking/rideMath';
+import { distanceToMeters, distanceUnitLabel, formatSpeed, speedUnitLabel } from '@/features/ride-tracking/rideMath';
 import { useTheme } from '@/hooks/use-theme';
 import { getBike } from '@/services/bikesService';
 import { createManualRide } from '@/services/ridesService';
 
 const now = new Date();
+// Faster on average than anyone rides a whole trip (~125 mph): almost
+// always a typo, or the odometer reading typed in as the distance.
+const MAX_MANUAL_AVG_SPEED_KMH = 200;
 
 export default function NewManualRideScreen() {
   const theme = useTheme();
@@ -60,6 +63,13 @@ export default function NewManualRideScreen() {
     }
     if (Number.isNaN(startedAt.getTime())) {
       setError('Enter a valid date');
+      return;
+    }
+    const avgSpeedKmh = distanceToMeters(distanceValue, units) / 1000 / (durationSeconds / 3600);
+    if (avgSpeedKmh > MAX_MANUAL_AVG_SPEED_KMH) {
+      setError(
+        `That's an average of ${formatSpeed(avgSpeedKmh, units)} ${speedUnitLabel(units)}. Check the distance and time.`
+      );
       return;
     }
 

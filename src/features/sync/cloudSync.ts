@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { repairRideStats } from '@/features/ride-tracking/rideStatsRepair';
 import { getDb } from '@/lib/localDb';
 
 /** The signed-in request helper from AuthContext. */
@@ -252,5 +253,7 @@ export async function restoreFromCloud(request: AuthedRequest): Promise<number> 
   // Mark what's now on the phone as backed up.
   const { records, pointRides } = await collect(db);
   await saveState(db, [...records, ...pointRides], []);
+  // After marking, so rides it fixes back up again with the fix.
+  await repairRideStats(db);
   return restored;
 }
