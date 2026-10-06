@@ -93,10 +93,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const setAvatar = useCallback(async (localUri: string) => {
     await savePhoto('avatar', AVATAR_ENTITY_ID, localUri);
-    // The filename never changes (always `avatar.jpg`), only its
-    // contents — bust the <Image> cache with a query string, same
-    // trick the old Supabase-backed avatar URL used.
-    const avatarUrl = `${getPhotoUri('avatar', AVATAR_ENTITY_ID)}?updated=${Date.now()}`;
+    // Always `avatar.jpg`; getPhotoUri adds the new save time so the image
+    // cache can't keep showing the old one.
+    const avatarUrl = getPhotoUri('avatar', AVATAR_ENTITY_ID);
     setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
     await updateLocalSettings({ avatar_filename: `${AVATAR_ENTITY_ID}.jpg` });
   }, []);

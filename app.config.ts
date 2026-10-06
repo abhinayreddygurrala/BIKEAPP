@@ -18,7 +18,7 @@ const config: ExpoConfig = {
     // The Apple Developer Program team (enrolling kept the same team ID).
     appleTeamId: "DWBAYP8K69",
     // Bump for every upload to App Store Connect.
-    buildNumber: "3",
+    buildNumber: "4",
     icon: "./assets/expo.icon",
     supportsTablet: false,
     infoPlist: {

@@ -36,7 +36,14 @@ export function deletePhoto(category: PhotoCategory, entityId: string): void {
   if (file.exists) file.delete();
 }
 
-/** Pure path build, no I/O — pass straight to <Image source={{ uri }} />. */
+/**
+ * For <Image source={{ uri }} /> only. A replaced or restored photo keeps its
+ * file name, so the URI carries the file's save time: with the bare path the
+ * image cache keeps showing the old picture (e.g. after signing out and back
+ * in, the restored avatar showed the photo from before it was changed).
+ */
 export function getPhotoUri(category: PhotoCategory, entityId: string): string {
-  return photoFile(category, entityId).uri;
+  const file = photoFile(category, entityId);
+  const { exists, modificationTime } = file.info();
+  return exists && modificationTime ? `${file.uri}?v=${modificationTime}` : file.uri;
 }
