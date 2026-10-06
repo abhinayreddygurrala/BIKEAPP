@@ -13,29 +13,28 @@ const FORK_DIR = new THREE.Vector3(-Math.sin(RAKE), Math.cos(RAKE), 0);
 const FORK_LEN = 0.75;
 const forkPoint = (u, z = 0) => FRONT.clone().addScaledVector(FORK_DIR, FORK_LEN * u).setZ(z);
 
-const ORANGE = new THREE.Color('#ff5a1f');
+const RED = new THREE.Color('#c8101c');
 const BLACK = new THREE.Color('#0e0e10');
 const WHITE = new THREE.Color('#f2f2f4');
-const AMBER = new THREE.Color('#ffb020');
-// The livery, in side-profile coordinates: black belly under a line rising to the nose, a white edge, an amber stripe.
+// The livery, in side-profile coordinates: black belly under a line rising to the nose, a white edge, a black stripe.
 const stripeLine = (x) => 0.3 + 0.343 * (x + 0.2);
 function liveryColor(x, y) {
   const l = stripeLine(x);
   if (y < l) return BLACK;
   if (y < l + 0.014) return WHITE;
-  if (y > l + 0.04 && y < l + 0.058) return AMBER;
-  return ORANGE;
+  if (y > l + 0.04 && y < l + 0.07) return BLACK;
+  return RED;
 }
 
 // Livery texture for panel sides, mapped by side-profile position (x -1..1, y 0..1.25 m).
-function liveryTexture(mirrored, anisotropy) {
+function liveryTexture(anisotropy) {
   const W = 2048, H = 1280, X0 = -1, Y1 = 1.25, ppm = 1024;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   const px = (x) => (x - X0) * ppm, py = (y) => (Y1 - y) * ppm;
   const grad = g.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, '#ff7a2c'); grad.addColorStop(1, '#f2481c');
+  grad.addColorStop(0, '#d81822'); grad.addColorStop(1, '#a80b16');
   g.fillStyle = grad; g.fillRect(0, 0, W, H);
   const band = (from, to, color) => {
     g.beginPath();
@@ -45,18 +44,7 @@ function liveryTexture(mirrored, anisotropy) {
   };
   band(-2, 0, '#0e0e10');
   band(0, 0.014, '#f2f2f4');
-  band(0.04, 0.058, '#ffb020');
-  // ODOMAP along the side, parallel to the stripes. On the left side the
-  // texture is seen mirrored, so the text is pre-mirrored there to read right.
-  const cx = px(0.2), cy = py(stripeLine(0.2) + 0.115), angle = Math.atan(0.343);
-  g.save();
-  g.translate(cx, cy);
-  if (mirrored) { g.scale(-1, 1); g.rotate(angle); } else g.rotate(-angle);
-  g.font = 'italic 800 74px "Helvetica Neue", Helvetica, Arial, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = '#0e0e10'; g.fillText('ODOMAP', 3, 4);
-  g.fillStyle = '#ffffff'; g.fillText('ODOMAP', 0, 0);
-  g.restore();
+  band(0.04, 0.07, '#0e0e10');
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = anisotropy;
@@ -142,7 +130,7 @@ function wheel({ radius, width, front, M }) {
   }
   prof.push(new THREE.Vector2(rim + 0.02, hw * 0.97), new THREE.Vector2(rim, hw * 0.86));
   g.add(new THREE.Mesh(new THREE.LatheGeometry(prof, 120).rotateX(Math.PI / 2), M.rubber));
-  // rim with an orange pinstripe on each lip
+  // rim with a red pinstripe on each lip
   const rimProf = [[0.2, -hw * 0.9], [0.219, -hw * 0.9], [0.214, -hw * 0.8], [0.203, -hw * 0.6], [0.199, 0], [0.203, hw * 0.6], [0.214, hw * 0.8], [0.219, hw * 0.9], [0.2, hw * 0.9]].map(([r, y]) => new THREE.Vector2(r, y));
   g.add(new THREE.Mesh(new THREE.LatheGeometry(rimProf, 96).rotateX(Math.PI / 2), M.wheel));
   for (const z of [-hw * 0.9, hw * 0.9]) {
@@ -195,15 +183,14 @@ function wheel({ radius, width, front, M }) {
 export function buildSportBike({ anisotropy = 8 } = {}) {
   const paintOpts = { metalness: 0.15, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.04 };
   const M = {
-    paint: new THREE.MeshPhysicalMaterial({ color: ORANGE, ...paintOpts }),
+    paint: new THREE.MeshPhysicalMaterial({ color: RED, ...paintOpts }),
     walls: new THREE.MeshPhysicalMaterial({ color: '#ffffff', vertexColors: true, ...paintOpts }),
-    liveryR: new THREE.MeshPhysicalMaterial({ map: liveryTexture(false, anisotropy), ...paintOpts }),
-    liveryL: new THREE.MeshPhysicalMaterial({ map: liveryTexture(true, anisotropy), ...paintOpts }),
+    livery: new THREE.MeshPhysicalMaterial({ map: liveryTexture(anisotropy), ...paintOpts }),
     gloss: new THREE.MeshPhysicalMaterial({ color: '#0d0d0f', metalness: 0.3, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.05 }),
     matte: new THREE.MeshStandardMaterial({ color: '#141416', metalness: 0.3, roughness: 0.65 }),
     rubber: new THREE.MeshStandardMaterial({ color: '#141416', roughness: 0.86, metalness: 0 }),
     wheel: new THREE.MeshPhysicalMaterial({ color: '#121214', metalness: 0.6, roughness: 0.3, clearcoat: 0.7, side: THREE.DoubleSide }),
-    pin: new THREE.MeshStandardMaterial({ color: '#ff6a1f', emissive: '#ff4b1f', emissiveIntensity: 0.25, roughness: 0.4 }),
+    pin: new THREE.MeshStandardMaterial({ color: '#e01b24', emissive: '#e0101c', emissiveIntensity: 0.25, roughness: 0.4 }),
     gold: new THREE.MeshStandardMaterial({ color: '#d9a84e', metalness: 1, roughness: 0.22 }),
     dlc: new THREE.MeshStandardMaterial({ color: '#1e1e24', metalness: 1, roughness: 0.18 }),
     disc: new THREE.MeshStandardMaterial({ color: '#c3c6cd', metalness: 1, roughness: 0.3 }),
@@ -220,7 +207,7 @@ export function buildSportBike({ anisotropy = 8 } = {}) {
     amber: new THREE.MeshStandardMaterial({ color: '#4a2000', emissive: '#ffb020', emissiveIntensity: 0.8 }),
     tft: new THREE.MeshStandardMaterial({ color: '#05070a', emissive: '#7cc0ff', emissiveIntensity: 0, side: THREE.DoubleSide }),
   };
-  const livery = { sides: [M.liveryL, M.liveryR], walls: M.walls, livery: true };
+  const livery = { sides: M.livery, walls: M.walls, livery: true };
   const body = new THREE.Group();
   const add = (...o) => { body.add(...o); return o[0]; };
 
@@ -242,7 +229,7 @@ export function buildSportBike({ anisotropy = 8 } = {}) {
     ['L', 0.05, 0.13], ['Q', -0.08, 0.14, -0.11, 0.21], ['Q', -0.13, 0.3, -0.06, 0.4]]), 0.125, { bevel: 0.04, ...livery }));
   add(panel(shapeOf([['M', 0.46, 0.95], ['Q', 0.44, 1.06, 0.32, 1.085], ['Q', 0.16, 1.1, 0.02, 1.045], ['Q', -0.06, 1.01, -0.1, 0.93], ['L', -0.06, 0.86], ['Q', 0.2, 0.86, 0.46, 0.95]]),
     0.175, { bevel: 0.065, segs: 7, ...livery }));
-  const fuelCap = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.008, 32), M.alu);
+  const fuelCap = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.008, 32), M.gunmetal);
   fuelCap.position.set(0.2, 1.093, 0);
   fuelCap.rotation.z = -0.12;
   add(fuelCap);

@@ -11,22 +11,33 @@
 <script type="module">
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 import { buildSportBike, WB, R_REAR, R_FRONT } from './bike.js';
 
+// A riderless red and black sport bike in a dark studio: close-up, pull back, a
+// stationary burnout in thick tyre smoke, a wheelie, the smoke clears and the
+// camera ends exactly where it started, so the video also loops.
 const q = new URLSearchParams(location.search);
 const W = +(q.get('w') || 1080), H = +(q.get('h') || 2346);
-// Background input colour, tuned so the encoded frame matches the splash (#0B0B0D).
-const BG_HEX = q.get('bg') || '#0B0B0D';
+
+// ---------- timeline (seconds) ----------
+const DURATION = 4.75;
+const BURN_FROM = 0.55, BURN_TO = 2.6;          // rear tyre spinning against the front brake
+const WHEELIE_FROM = 2.6, WHEELIE_TOP = 2.98, WHEELIE_DOWN = 3.28, LANDS = 3.66;
+const WHEELIE_DEG = 38;
+const TRAVEL = 4 * (2 * Math.PI / 5) * R_FRONT;  // ~1.5 m; whole turns of the 5-spoke wheels so the last frame matches the first
+const CLEAR_FROM = 3.2, CLEAR_TO = 4.4;        // the smoke thins out and is gone
+window.DURATION = DURATION;
 
 // ---------- helpers ----------
 const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const easeOutCubic = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
 const easeInOutCubic = (x) => { x = clamp(x, 0, 1); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+function rng(seed) { let x = seed >>> 0; return () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296; }
 
 // ---------- renderer ----------
 const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
@@ -40,286 +51,469 @@ document.body.appendChild(renderer.domElement);
 
 // ACES (as three.js applies it) crushes darks; find the input that comes out as the splash colour.
 function acesPreimage(hex) {
-  const target = new THREE.Color(hex); // linear
+  const target = new THREE.Color(hex);
   const fit = (v) => (v * (v + 0.0245786) - 0.000090537) / (v * (0.983729 * v + 0.432951) + 0.238081);
   const solve = (L) => { let lo = 0, hi = 1; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (fit(m) < L) lo = m; else hi = m; } return 0.6 * lo; };
   return new THREE.Color(solve(target.r), solve(target.g), solve(target.b));
 }
-const BG = acesPreimage(BG_HEX);
+const BG = acesPreimage('#0B0B0D');
+const WALL = new THREE.Color('#1c1d24'), WALL_GLOW = 0.3;
+// where the floor fades out it matches the bottom of the backdrop, so there's no horizon line
+const FLOOR_FAR = BG.clone().add(WALL.clone().multiplyScalar(WALL_GLOW));
 const scene = new THREE.Scene();
 scene.background = BG.clone();
-const FOG_COLOR = new THREE.Color('#100c0b');
-scene.fog = new THREE.FogExp2(BG.clone(), 0.011);
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.55;
+scene.fog = new THREE.Fog(BG.clone(), 14, 45);
+const camera = new THREE.PerspectiveCamera(34, W / H, 0.05, 200);
 
-const camera = new THREE.PerspectiveCamera(16, W / H, 0.1, 3000);
+// ---------- studio reflections: softboxes in a black room ----------
+{
+  const env = new THREE.Scene();
+  env.background = new THREE.Color('#000000');
+  const box = (w, h, pos, look, intensity, color = '#ffffff') => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity), side: THREE.DoubleSide }));
+    m.position.set(...pos);
+    m.lookAt(...look);
+    env.add(m);
+  };
+  box(6, 2.2, [0, 6, 0], [0, 0, 0], 1.8);                 // overhead softbox
+  box(0.6, 5, [-5, 2.5, -3], [0, 1, 0], 1.6, '#cfdcff');  // tall strips
+  box(0.6, 5, [4, 2.5, -5], [0, 1, 0], 1.4);
+  box(5, 2.5, [5, 1.8, 4], [0, 1, 0], 0.5);               // big soft fill
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(env, 0.015).texture;
+  scene.environmentIntensity = 0.6;
+}
 
 // ---------- bike ----------
 const bike = buildSportBike({ anisotropy: renderer.capabilities.getMaxAnisotropy() });
 const { body, rearWheel, frontWheel } = bike;
-const lampMat = bike.led, tailMat = bike.tail;
-const beam = new THREE.SpotLight('#f2f6ff', 0, 70, 0.42, 0.55, 1.6);
+const beam = new THREE.SpotLight('#eef3ff', 0, 40, 0.38, 0.6, 1.4);
 beam.position.copy(bike.headlight);
 const beamTarget = new THREE.Object3D();
-beamTarget.position.set(14, -1.2, 0);
+beamTarget.position.set(10, -0.9, 0);
 body.add(beam, beamTarget);
 beam.target = beamTarget;
-const tailGlow = new THREE.PointLight('#ff2a1a', 0, 3, 2);
+const tailGlow = new THREE.PointLight('#ff1a12', 0, 3, 2);
 tailGlow.position.copy(bike.tailLight);
 body.add(tailGlow);
+bike.led.emissiveIntensity = 2.6;
+bike.tft.emissiveIntensity = 0.6;
 
-// rig: position/heading → lean → wheelie pivot (rear tyre) → body
+// rig: position → yaw about the front tyre (the rear steps out) → roll → wheelie about the rear tyre → body
 const bikeRoot = new THREE.Group();
-const leanG = new THREE.Group();
+const yawG = new THREE.Group();
+const rollG = new THREE.Group();
 const pivot = new THREE.Group();
+yawG.position.set(WB / 2, 0, 0);
+rollG.position.set(-WB / 2, 0, 0);
 pivot.position.set(-WB / 2, 0, 0);
 body.position.set(WB / 2, 0, 0);
 pivot.add(body);
-leanG.add(pivot);
-bikeRoot.add(leanG);
+rollG.add(pivot);
+yawG.add(rollG);
+bikeRoot.add(yawG);
 scene.add(bikeRoot);
 
-// ---------- road ----------
-// Heading psi(s): straight, then S-bends that grow in. Forward = (cos psi, 0, -sin psi); right = (sin psi, 0, cos psi).
-const BEND_FROM = 9, RAMP = 30, BEND_L = 62, BEND_A = 0.78;
-const psiAt = (s) => (s <= BEND_FROM ? 0 : BEND_A * smooth(0, RAMP, s - BEND_FROM) * Math.sin((2 * Math.PI * (s - BEND_FROM)) / BEND_L));
-const DS = 0.25, S_MIN = -120, S_MAX = 420;
-const NS = Math.round((S_MAX - S_MIN) / DS) + 1;
-const RX = new Float64Array(NS), RZ = new Float64Array(NS), RP = new Float64Array(NS);
-{
-  const i0 = Math.round(-S_MIN / DS);
-  RX[i0] = 0; RZ[i0] = 0; RP[i0] = 0;
-  for (let i = i0 + 1; i < NS; i++) {
-    const s = S_MIN + i * DS, p = psiAt(s - DS / 2);
-    RX[i] = RX[i - 1] + Math.cos(p) * DS; RZ[i] = RZ[i - 1] - Math.sin(p) * DS; RP[i] = psiAt(s);
-  }
-  for (let i = i0 - 1; i >= 0; i--) { RX[i] = RX[i + 1] - DS; RZ[i] = 0; RP[i] = 0; }
-}
-function roadAt(s) {
-  const f = clamp((s - S_MIN) / DS, 0, NS - 1.001), i = Math.floor(f), u = f - i;
-  return { x: RX[i] + (RX[i + 1] - RX[i]) * u, z: RZ[i] + (RZ[i + 1] - RZ[i]) * u, psi: RP[i] + (RP[i + 1] - RP[i]) * u };
-}
-const ROAD_W = 7;
-function strip(offA, offB, s0, s1, mat, y = 0, dashOn = 0, dashOff = 0) {
-  const pos = [], idx = [];
-  const add = (sa, sb) => {
-    const base = pos.length / 3;
-    for (let s = sa; s <= sb + 1e-6; s += DS) {
-      const r = roadAt(s), sx = Math.sin(r.psi), cz = Math.cos(r.psi);
-      pos.push(r.x + sx * offA, y, r.z + cz * offA, r.x + sx * offB, y, r.z + cz * offB);
-    }
-    const n = pos.length / 3 - base;
-    for (let k = 0; k < n / 2 - 1; k++) { const a = base + 2 * k; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-  };
-  if (dashOn) { for (let s = s0; s < s1; s += dashOn + dashOff) add(s, Math.min(s + dashOn, s1)); } else add(s0, s1);
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  const m = new THREE.Mesh(g, mat);
-  m.receiveShadow = true;
-  return m;
-}
-const ASPHALT = new THREE.Color('#1e1e23');
-const asphalt = new THREE.MeshStandardMaterial({ color: ASPHALT.clone(), roughness: 0.85, metalness: 0, envMapIntensity: 0.25, transparent: true });
-const LINE = new THREE.Color('#c4c4ca');
-const lineMat = new THREE.MeshStandardMaterial({ color: LINE.clone(), roughness: 0.5, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.03, transparent: true });
-const edgeMat = new THREE.MeshStandardMaterial({ color: LINE.clone().multiplyScalar(0.7), roughness: 0.5, transparent: true });
-scene.add(strip(-ROAD_W / 2, ROAD_W / 2, S_MIN, S_MAX, asphalt, 0));
-scene.add(strip(-0.07, 0.07, S_MIN + 1, S_MAX, lineMat, 0.004, 3, 4.5));
-scene.add(strip(-ROAD_W / 2 + 0.25, -ROAD_W / 2 + 0.37, S_MIN, S_MAX, edgeMat, 0.004));
-scene.add(strip(ROAD_W / 2 - 0.37, ROAD_W / 2 - 0.25, S_MIN, S_MAX, edgeMat, 0.004));
-const GROUND = new THREE.Color('#09090b');
-const groundMat = new THREE.MeshStandardMaterial({ color: GROUND.clone(), roughness: 1, envMapIntensity: 0, transparent: true });
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000).rotateX(-Math.PI / 2), groundMat);
-ground.position.y = -0.02;
-ground.receiveShadow = true;
-scene.add(ground);
-
-// ---------- sky, horizon glow and mountains ----------
-const skyMat = new THREE.ShaderMaterial({
-  side: THREE.BackSide, depthWrite: false, fog: false,
-  uniforms: {
-    bg: { value: BG.clone() }, top: { value: new THREE.Color('#0d0d12') }, horizon: { value: new THREE.Color('#2a140c') },
-    glow: { value: new THREE.Color('#ff6a2a') }, env: { value: 0 },
+// ---------- floor: a blurred mirror under a lit, see-through layer ----------
+const REFLECT = 0.2;
+const reflector = new Reflector(new THREE.PlaneGeometry(400, 400), {
+  textureWidth: W / 2, textureHeight: H / 2, clipBias: 0.002, multisample: 4,
+  shader: {
+    name: 'StudioFloor',
+    uniforms: { color: { value: null }, tDiffuse: { value: null }, textureMatrix: { value: null }, texel: { value: new THREE.Vector2(2 / W, 2 / H) },
+      strength: { value: REFLECT }, camPos: { value: new THREE.Vector3() }, far: { value: FLOOR_FAR.clone() } },
+    vertexShader: `uniform mat4 textureMatrix; varying vec4 vUv; varying vec3 vWorld;
+      void main(){ vUv = textureMatrix * vec4(position, 1.0); vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: `uniform vec3 color, camPos, far; uniform sampler2D tDiffuse; uniform vec2 texel; uniform float strength; varying vec4 vUv; varying vec3 vWorld;
+      void main(){
+        vec2 uv = vUv.xy / vUv.w; vec3 r = vec3(0.0); float wsum = 0.0;
+        for (int i = -3; i <= 3; i++) for (int j = -3; j <= 3; j++) {
+          float w = exp(-float(i * i + j * j) / 6.0);
+          r += texture2D(tDiffuse, uv + vec2(float(i), float(j)) * texel * 1.3).rgb * w; wsum += w; }
+        r /= wsum;
+        vec3 v = normalize(camPos - vWorld);
+        float fres = strength * (0.55 + 0.45 * pow(1.0 - v.y, 3.0));
+        vec3 col = color + r * fres;
+        gl_FragColor = vec4(mix(col, far, smoothstep(8.0, 30.0, distance(vWorld, camPos))), 1.0);
+      }`,
   },
-  vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-  fragmentShader: `uniform vec3 bg, top, horizon, glow; uniform float env; varying vec3 vDir;
-    float rand(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233))) * 43758.5453); }
-    void main(){ vec3 d = normalize(vDir); float h = d.y;
-      vec3 col = mix(horizon, top, smoothstep(-0.02, 0.32, h));
-      col = mix(col, top * 0.6, smoothstep(-0.005, -0.08, h)); // below the horizon is ground, so keep it dark
-      float ahead = 0.35 + 0.65 * smoothstep(-0.4, 1.0, d.x);
-      col += glow * exp(-abs(h - 0.01) * 22.0) * 0.55 * ahead;
-      col = mix(bg, col, env);
-      col += (rand(gl_FragCoord.xy) - 0.5) * 0.0025;
-      gl_FragColor = vec4(col, 1.0); }`,
 });
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(1500, 64, 32), skyMat));
-function ridge(radius, base, amp, seed, color) {
-  const pos = [], idx = [], N = 360;
-  for (let i = 0; i <= N; i++) {
-    const a = (i / N) * Math.PI * 2;
-    const h = base + amp * (0.55 * Math.sin(a * 3 + seed) + 0.3 * Math.sin(a * 7 + seed * 2) + 0.15 * Math.sin(a * 17 + seed * 3) + 0.4);
-    pos.push(Math.cos(a) * radius, -2, Math.sin(a) * radius, Math.cos(a) * radius, h, Math.sin(a) * radius);
-    if (i < N) { const k = 2 * i; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  const m = new THREE.MeshBasicMaterial({ color: BG.clone(), side: THREE.DoubleSide, fog: false });
-  const mesh = new THREE.Mesh(g, m);
-  mesh.userData.color = new THREE.Color(color);
-  return mesh;
+reflector.material.uniforms.color.value = acesPreimage('#0c0c0e');
+reflector.rotation.x = -Math.PI / 2;
+scene.add(reflector);
+// Lights and shadows on the floor, added over the mirror.
+const litFloor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.6, metalness: 0, envMapIntensity: 0, fog: false, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+litFloor.position.y = 0.0008;
+litFloor.receiveShadow = true;
+scene.add(litFloor);
+{
+  const render = reflector.onBeforeRender;
+  reflector.onBeforeRender = function (...a) { litFloor.visible = false; render.apply(this, a); litFloor.visible = true; };
 }
-const ridges = [ridge(900, 40, 70, 1.3, '#120f10'), ridge(600, 18, 40, 4.1, '#0e0c0d')];
-scene.add(...ridges);
 
-// ---------- lights ----------
-const hemi = new THREE.HemisphereLight('#4a5266', '#0b0b0d', 0);
-scene.add(hemi);
-const key = new THREE.DirectionalLight('#d9e0ff', 1.5);
+// ---------- backdrop: dark, with a soft glow along the far floor line ----------
+const backdrop = new THREE.Mesh(new THREE.SphereGeometry(120, 64, 32), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: { bg: { value: BG.clone() }, wall: { value: WALL.clone() }, glow: { value: WALL_GLOW } },
+  vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: `uniform vec3 bg, wall; uniform float glow; varying vec3 vDir;
+    float rand(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233))) * 43758.5453); }
+    void main(){ vec3 d = normalize(vDir);
+      vec3 col = bg + wall * exp(-max(d.y, 0.0) * 5.0) * glow;
+      col += (rand(gl_FragCoord.xy) - 0.5) * 0.002;
+      gl_FragColor = vec4(col, 1.0); }`,
+}));
+scene.add(backdrop);
+
+// ---------- studio lights (they follow the bike) ----------
+scene.add(new THREE.HemisphereLight('#5a6070', '#0b0b0d', 0.12));
+const key = new THREE.SpotLight('#f4f6ff', 4, 0, 0.5, 1, 0);
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
-key.shadow.camera.left = -4; key.shadow.camera.right = 4; key.shadow.camera.top = 4; key.shadow.camera.bottom = -4;
-key.shadow.camera.near = 1; key.shadow.camera.far = 40;
-key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
+key.shadow.camera.near = 2; key.shadow.camera.far = 14;
+key.shadow.bias = -0.0003; key.shadow.normalBias = 0.02;
+key.shadow.radius = 6;
 scene.add(key, key.target);
-// Rims are narrow spots on the bike, so they don't flood the road.
-const rim = new THREE.SpotLight('#9db8ff', 0, 0, 0.32, 0.8, 2);
-scene.add(rim, rim.target);
-const warmRim = new THREE.SpotLight('#ff8a4a', 0, 0, 0.28, 0.8, 2);
-scene.add(warmRim, warmRim.target);
+const rimCool = new THREE.SpotLight('#9db8ff', 6, 9.5, 0.3, 0.8, 0);
+scene.add(rimCool, rimCool.target);
+const rimWarm = new THREE.SpotLight('#ff5a4a', 3.5, 8.5, 0.28, 0.8, 0);
+scene.add(rimWarm, rimWarm.target);
 
-// ---------- post ----------
-const target = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, samples: 4 });
-const composer = new EffectComposer(renderer, target);
+// ---------- motion ----------
+function wheelieDeg(t) {
+  if (t < WHEELIE_FROM) return 0;
+  if (t < WHEELIE_TOP) return WHEELIE_DEG * easeOutCubic((t - WHEELIE_FROM) / (WHEELIE_TOP - WHEELIE_FROM));
+  if (t < WHEELIE_DOWN) return WHEELIE_DEG + 2.5 * Math.sin(((t - WHEELIE_TOP) / (WHEELIE_DOWN - WHEELIE_TOP)) * Math.PI);
+  if (t < LANDS) return WHEELIE_DEG * (1 - easeInOutCubic((t - WHEELIE_DOWN) / (LANDS - WHEELIE_DOWN)));
+  const b = t - LANDS;
+  return b < 0.3 ? -1.6 * Math.sin((b / 0.3) * Math.PI) * (1 - b / 0.3) : 0; // forks dip as it lands
+}
+const travel = (t) => TRAVEL * easeInOutCubic((t - WHEELIE_FROM) / (LANDS + 0.25 - WHEELIE_FROM));
+// burnout: how hard the rear tyre is spinning (0..1); the rear steps out a little and the bike shakes
+const burn = (t) => smooth(BURN_FROM, BURN_FROM + 0.3, t) * (1 - smooth(BURN_TO - 0.05, BURN_TO + 0.2, t));
+const yawDeg = (t) => burn(t) * (2.2 * Math.sin((t - BURN_FROM) * 3.1) + 0.8 * Math.sin((t - BURN_FROM) * 7.3));
+const shake = (t) => burn(t) * (Math.sin(t * 173) * 0.5 + Math.sin(t * 241 + 1) * 0.5);
+// Rear tyre angle: spun during the burnout, rolled during the launch. Scaled so it ends on a whole
+// number of spoke steps, then the last frame matches the first.
+const SPIN = 24; // rad/s at full burnout
+const spinTable = (() => {
+  const n = Math.ceil(DURATION * 600), out = new Float64Array(n + 1);
+  for (let i = 1; i <= n; i++) out[i] = out[i - 1] + (SPIN * burn((i - 0.5) / 600)) / 600;
+  const step = (2 * Math.PI) / 5, roll = TRAVEL / R_REAR, total = out[n] + roll;
+  const fix = (Math.round(total / step) * step - roll) / out[n];
+  for (let i = 0; i <= n; i++) out[i] *= fix;
+  return out;
+})();
+const spinAt = (t) => spinTable[clamp(Math.round(t * 600), 0, spinTable.length - 1)];
+function rearContact(t) {
+  const x = travel(t), yaw = THREE.MathUtils.degToRad(yawDeg(t));
+  return new THREE.Vector3(x + WB / 2 - WB * Math.cos(yaw), 0, WB * Math.sin(yaw));
+}
+
+// ---------- tyre smoke: puffs thrown off the rear tyre, raymarched as one volume ----------
+const PUFF_N = 64;
+const PUFFS = (() => {
+  const r = rng(7), out = [];
+  for (let i = 0; i < PUFF_N; i++) {
+    const birth = BURN_FROM + 0.1 + ((BURN_TO + 0.3 - BURN_FROM - 0.1) * (i + r() * 0.8)) / PUFF_N;
+    // 0 = straight back; mostly fans out to the far (left) side, away from the camera
+    const side = r() < 0.82 ? -1 : 1, a = Math.pow(r(), 0.85) * (side < 0 ? 1.75 : 0.6) * side;
+    const speed = 2 + r() * 2.6;
+    out.push({
+      birth, src: rearContact(birth),
+      v: new THREE.Vector3(-Math.cos(a) * speed, 0.35 + r() * 1.1, Math.sin(a) * speed * 0.85),
+      tau: 0.28 + r() * 0.25, rise: 0.22 + r() * 0.5,
+      drift: new THREE.Vector3(0.05 + r() * 0.2, 0, -0.1 - r() * 0.15),
+      r0: 0.12 + r() * 0.1, grow: 0.55 + r() * 0.7, amp: 0.8 + r() * 0.5,
+    });
+  }
+  return out;
+})();
+function smokeAt(t) {
+  const clear = smooth(CLEAR_FROM, CLEAR_TO, t);
+  const pos = [], amp = [], lo = new THREE.Vector3(1e9, 1e9, 1e9), hi = new THREE.Vector3(-1e9, -1e9, -1e9);
+  for (const p of PUFFS) {
+    const age = t - p.birth;
+    if (age <= 0 || clear >= 1) continue;
+    const rad = p.r0 + p.grow * Math.pow(age, 0.62) * (1 + 0.35 * clear);
+    const c = p.src.clone()
+      .addScaledVector(p.v.clone().setY(0), p.tau * (1 - Math.exp(-age / p.tau)))
+      .addScaledVector(p.drift, age);
+    c.y = Math.max(p.v.y * p.tau * (1 - Math.exp(-age / p.tau)) + p.rise * Math.pow(age, 1.3) + 0.4 * clear * clear, rad * 0.42);
+    const a = p.amp * smooth(0, 0.12, age) * Math.pow(0.55 / (0.55 + rad), 1.1);
+    pos.push(new THREE.Vector4(c.x, c.y, c.z, rad));
+    amp.push(a);
+    lo.min(c.clone().subScalar(rad)); hi.max(c.clone().addScalar(rad));
+  }
+  lo.y = Math.max(lo.y, 0);
+  return { pos, amp, lo, hi, erode: 0.5 + 0.6 * clear, fade: 1 - clear };
+}
+
+const SMOKE_GLSL = /* glsl */`
+uniform sampler2D tScene, tDepth;
+uniform mat4 projInv, camWorld;
+uniform vec3 camPos;
+uniform float time, erode, fade, haze;
+uniform int count;
+uniform vec4 puffP[${PUFF_N}];
+uniform float puffA[${PUFF_N}];
+uniform vec3 boxLo, boxHi;
+uniform vec3 keyDir, keyCol, backDir, backCol, ambCol;
+uniform vec3 headPos, headDir, headCol;
+uniform vec3 tailPos, tailCol;
+uniform float reflectAmt;
+varying vec2 vUv;
+
+vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 permute(vec4 x){return mod289(((x*34.0)+10.0)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+float snoise(vec3 v){
+  const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+  i=mod289(i);
+  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+  float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+  vec4 j=p-49.0*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
+  vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+  vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+  vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
+  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+  vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+  p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+  vec4 m=max(0.5-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;
+  return 105.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+}
+float fbm(vec3 p){ float a=0.5, s=0.0; for(int i=0;i<4;i++){ s+=a*snoise(p); p=p*2.03+vec3(1.7,9.2,3.1); a*=0.5; } return s; }
+
+// The smooth outline of all the puffs.
+float shape(vec3 p){
+  float d = 0.0;
+  for (int i = 0; i < ${PUFF_N}; i++) {
+    if (i >= count) break;
+    vec4 c = puffP[i];
+    vec3 q = p - c.xyz; q.y *= 1.3;
+    float r2 = dot(q, q) / (c.w * c.w);
+    if (r2 < 1.0) { float f = 1.0 - r2; d += puffA[i] * f * f; }
+  }
+  return d * smoothstep(0.0, 0.05, p.y);
+}
+// Billowing detail eaten into that outline; rolls upward and back over time.
+float density(vec3 p, out float n){
+  n = 0.0;
+  float s = shape(p);
+  if (s < 0.01) return 0.0;
+  vec3 q = (p - vec3(-0.25, 0.55, 0.0) * time) * 1.7;
+  q += 0.55 * snoise(q * 0.4 + 3.7);
+  n = clamp(0.5 + 0.6 * fbm(q), 0.0, 1.0);
+  float cov = (1.0 - exp(-1.3 * s)) * fade; // fade thins it out as it clears, and the noise breaks it up
+  return max(cov - (1.0 - n) * erode, 0.0);
+}
+float hg(float c, float g){ float g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * c, 1.5); }
+vec2 boxHit(vec3 ro, vec3 rd){
+  vec3 inv = 1.0 / rd, t0 = (boxLo - ro) * inv, t1 = (boxHi - ro) * inv;
+  vec3 mn = min(t0, t1), mx = max(t0, t1);
+  return vec2(max(max(mn.x, mn.y), max(mn.z, 0.0)), min(min(mx.x, mx.y), mx.z));
+}
+float beamAt(vec3 p, out vec3 l, out float dist){
+  vec3 v = p - headPos; dist = length(v); l = v / dist;
+  return smoothstep(0.82, 0.96, dot(l, headDir)) / (1.0 + dist * dist * 0.3);
+}
+const float SIGMA = 3.2;
+// Scattered light and transmittance along a ray from ro, up to tMax.
+vec4 march(vec3 ro, vec3 rd, float tMax, int steps, float jitter, bool shadows){
+  vec2 hit = boxHit(ro, rd);
+  float t0 = hit.x, t1 = min(hit.y, tMax);
+  vec3 S = vec3(0.0); float T = 1.0;
+  if (t1 <= t0) return vec4(S, T);
+  float dt = (t1 - t0) / float(steps);
+  for (int i = 0; i < 160; i++) {
+    if (i >= steps || T < 0.01) break;
+    vec3 p = ro + rd * (t0 + (float(i) + jitter) * dt);
+    float n; float d = density(p, n);
+    vec3 l; float ld; float beam = beamAt(p, l, ld);
+    float sig = SIGMA * d + haze * beam;
+    if (sig < 1e-4) continue;
+    float tk = 1.0;
+    if (shadows && d > 0.0) tk = exp(-SIGMA * 1.1 * (shape(p + keyDir * 0.18) * 0.18 + shape(p + keyDir * 0.5) * 0.32 + shape(p + keyDir * 1.0) * 0.5));
+    float light = tk + 0.2 * pow(tk, 0.25); // single scattering plus a cheap multiple-scattering term
+    float billow = 0.35 + 0.9 * n;         // tops of the billows catch more light than the hollows
+    vec3 Ls = (keyCol * light * hg(dot(rd, keyDir), 0.2)
+            + backCol * (0.3 + 0.7 * tk) * hg(dot(rd, backDir), 0.6)
+            + ambCol * (0.3 + 0.7 * pow(tk, 0.3))) * billow
+            + tailCol / (1.0 + dot(p - tailPos, p - tailPos) * 5.0);
+    vec3 L = SIGMA * d * 0.92 * Ls + sig * headCol * beam * hg(dot(rd, -l), 0.45);
+    float a = exp(-sig * dt);
+    S += T * L * (1.0 - a) / sig;
+    T *= a;
+  }
+  return vec4(S, T);
+}
+float rand(vec2 c){ return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
+void main(){
+  vec3 scene = texture2D(tScene, vUv).rgb;
+  float z = texture2D(tDepth, vUv).x;
+  vec4 v = projInv * vec4(vUv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0); v /= v.w;
+  vec3 wp = (camWorld * v).xyz;
+  vec3 rd = normalize(wp - camPos);
+  float tMax = z >= 0.99999 ? 1e4 : distance(wp, camPos);
+  float jitter = rand(gl_FragCoord.xy);
+  // the floor reflects the smoke too, and the smoke shades the floor under it
+  if (rd.y < 0.0) {
+    float tf = -camPos.y / rd.y;
+    if (abs(tf - tMax) < 0.02 * tf + 0.01) {
+      vec3 fp = camPos + rd * tf;
+      float col = shape(fp + keyDir * 0.3) * 0.3 + shape(fp + keyDir * 0.8) * 0.5 + shape(fp + keyDir * 1.5) * 0.7;
+      scene *= mix(1.0, exp(-SIGMA * 0.4 * col), 0.75);
+      vec4 r = march(fp, reflect(rd, vec3(0.0, 1.0, 0.0)), 1e4, 40, jitter, false);
+      scene = scene * mix(1.0, r.a, reflectAmt) + reflectAmt * r.rgb;
+    }
+  }
+  vec4 m = march(camPos, rd, tMax, 110, jitter, true);
+  gl_FragColor = vec4(scene * m.a + m.rgb, 1.0);
+}`;
+
+const sceneRT = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(W, H) });
+const smokeMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tScene: { value: sceneRT.texture }, tDepth: { value: sceneRT.depthTexture },
+    projInv: { value: new THREE.Matrix4() }, camWorld: { value: new THREE.Matrix4() }, camPos: { value: new THREE.Vector3() },
+    time: { value: 0 }, erode: { value: 0.5 }, fade: { value: 1 }, haze: { value: 0.03 }, count: { value: 0 },
+    puffP: { value: Array.from({ length: PUFF_N }, () => new THREE.Vector4()) }, puffA: { value: new Array(PUFF_N).fill(0) },
+    boxLo: { value: new THREE.Vector3() }, boxHi: { value: new THREE.Vector3() },
+    keyDir: { value: new THREE.Vector3(0, 1, 0) }, keyCol: { value: new THREE.Color('#f4f6ff').multiplyScalar(0.9) },
+    backDir: { value: new THREE.Vector3() }, backCol: { value: new THREE.Color('#9db8ff').multiplyScalar(0.5) },
+    ambCol: { value: new THREE.Color('#8a8e99').multiplyScalar(0.05) },
+    headPos: { value: new THREE.Vector3() }, headDir: { value: new THREE.Vector3() }, headCol: { value: new THREE.Color('#eef3ff').multiplyScalar(3) },
+    tailPos: { value: new THREE.Vector3() }, tailCol: { value: new THREE.Color('#ff1a12').multiplyScalar(0) },
+    reflectAmt: { value: REFLECT },
+  },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: SMOKE_GLSL,
+});
+class SceneAndSmokePass extends Pass {
+  constructor() { super(); this.quad = new FullScreenQuad(smokeMat); }
+  render(r, writeBuffer) {
+    r.setRenderTarget(sceneRT);
+    r.clear();
+    r.render(scene, camera);
+    r.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(r);
+  }
+}
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType }));
 composer.setPixelRatio(1);
 composer.setSize(W, H);
-composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.5, 0.55, 0.88);
-composer.addPass(bloom);
+composer.addPass(new SceneAndSmokePass());
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W, H), 0.3, 0.5, 1.4));
 composer.addPass(new OutputPass());
 
-// ---------- choreography ----------
-// A rolling wheelie and the landing; the app takes over with tyre smoke from there.
-const T_GO = 0.45, ROLL = 0.85, ROLL_V = 3.2, T_LAND = 1.21;
-function rideS(t) {
-  const u = clamp((t - T_GO) / ROLL, 0, 1);
-  return ((ROLL_V * ROLL) / Math.PI) * (1 - Math.cos(Math.PI * u));
-}
-function wheelieDeg(t) {
-  const up0 = T_GO, up1 = T_GO + 0.27, down0 = T_GO + 0.5, down1 = T_LAND;
-  if (t < up0) return 0;
-  if (t < up1) return 22 * easeOutCubic((t - up0) / (up1 - up0));
-  if (t < down0) return 22 + 1.5 * Math.sin(((t - up1) / (down0 - up1)) * Math.PI);
-  if (t < down1) return 22 * (1 - easeInOutCubic((t - down0) / (down1 - down0)));
-  const b = t - down1;
-  return b < 0.22 ? -1.8 * Math.sin((b / 0.22) * Math.PI) : 0;
-}
-// Camera keys, relative to the bike: az 0 = in front, 90 = its right side, 180 = behind.
+// ---------- camera: close on the front, pull back, drift through the burnout, back to the start ----------
+// Relative to the bike: az 0 = in front, 90 = its right side; (tx, ty) is the point looked at.
+const OPEN = { az: 36, el: 3, dist: 4.2, fov: 34, tx: 0.25, ty: 0.85 };
 const KEYS = [
-  { t: 0.0, az: 90, el: 0, dist: 92, fov: 16, look: 0, h: 0.6 },
-  { t: 0.12, az: 90, el: 0, dist: 92, fov: 16, look: 0, h: 0.6 },
-  { t: 0.72, az: 54, el: 6, dist: 6.4, fov: 44, look: 0.1, h: 0.6 },
-  { t: 1.45, az: 68, el: 5, dist: 5.8, fov: 44, look: 0, h: 0.58 },
+  { t: 0, ...OPEN, still: true },
+  { t: 0.25, ...OPEN, still: true },
+  { t: 1.7, az: 40, el: 5, dist: 7.6, fov: 34, tx: -0.2, ty: 1.3 },
+  { t: 2.6, az: 47, el: 5, dist: 7.0, fov: 34, tx: -0.2, ty: 1.3 },
+  { t: 3.55, az: 44, el: 6, dist: 7.3, fov: 34, tx: 0, ty: 1.45 },
+  { t: 4.5, ...OPEN, still: true },
+  { t: DURATION, ...OPEN, still: true },
 ];
 function camAt(t) {
   const k = KEYS;
-  if (t <= k[0].t) return { ...k[0] };
   if (t >= k[k.length - 1].t) return { ...k[k.length - 1] };
   let i = 0;
   while (t > k[i + 1].t) i++;
   const a = k[i], b = k[i + 1], dt = b.t - a.t, u = (t - a.t) / dt;
   const h00 = 2 * u ** 3 - 3 * u ** 2 + 1, h10 = u ** 3 - 2 * u ** 2 + u, h01 = -2 * u ** 3 + 3 * u ** 2, h11 = u ** 3 - u ** 2;
   const out = {};
-  for (const p of ['az', 'el', 'dist', 'fov', 'look', 'h']) {
+  for (const p of ['az', 'el', 'dist', 'fov', 'tx', 'ty']) {
     const val = (key) => (p === 'dist' ? Math.log(key[p]) : key[p]);
-    const tan = (j) => (j <= 0 || j >= k.length - 1 ? 0 : ((val(k[j + 1]) - val(k[j - 1])) / (k[j + 1].t - k[j - 1].t)) * dt);
-    // hold still at the first move and ease into the last key
-    const m0 = i === 1 ? 0 : tan(i), m1 = tan(i + 1);
-    const v = h00 * val(a) + h10 * m0 + h01 * val(b) + h11 * m1;
+    const tan = (j) => (k[j].still || j <= 0 || j >= k.length - 1 ? 0 : ((val(k[j + 1]) - val(k[j - 1])) / (k[j + 1].t - k[j - 1].t)) * dt);
+    const v = h00 * val(a) + h10 * tan(i) + h01 * val(b) + h11 * tan(i + 1);
     out[p] = p === 'dist' ? Math.exp(v) : v;
   }
   return out;
 }
-const LANE = 1.4;
 
 function pose(t) {
-  const env = smooth(0.06, 0.5, t);
-  const lamp = smooth(0.2, 0.32, t);
-  // environment fade-in
-  skyMat.uniforms.env.value = env;
-  scene.fog.color.copy(BG).lerp(FOG_COLOR, env);
-  asphalt.opacity = env;
-  lineMat.opacity = env;
-  edgeMat.opacity = env;
-  groundMat.opacity = env;
-  for (const r of ridges) r.material.color.copy(BG).lerp(r.userData.color, env);
-  hemi.intensity = 0.14 * env;
-  rim.intensity = 160 * env;
-  warmRim.intensity = 90 * env;
-  beam.intensity = 260 * lamp;
-  lampMat.emissiveIntensity = 0.3 + 5 * lamp;
-  // the brake light comes on hard for the burnout
-  tailMat.emissiveIntensity = 0.25 + 0.9 * lamp + 2.2 * smooth(T_LAND - 0.05, T_LAND + 0.05, t);
-  tailGlow.intensity = 0.45 * lamp + 1.6 * smooth(T_LAND - 0.05, T_LAND + 0.05, t);
-  bike.tft.emissiveIntensity = 1.4 * lamp;
+  // bike
+  const x = travel(t), b = burn(t);
+  bikeRoot.position.set(x, 0, 0);
+  yawG.rotation.y = THREE.MathUtils.degToRad(yawDeg(t));
+  rollG.rotation.x = THREE.MathUtils.degToRad(0.35 * shake(t));
+  pivot.rotation.z = THREE.MathUtils.degToRad(wheelieDeg(t) + 0.6 * b);
+  body.position.y = 0.0025 * shake(t + 0.3);
+  rearWheel.rotation.z = -spinAt(t) - (x / R_REAR);
+  frontWheel.rotation.z = -x / R_FRONT;
+  // the brake light glows through the smoke while the front brake holds it
+  bike.tail.emissiveIntensity = 0.6 + 3 * b;
+  tailGlow.intensity = 0.4 + 2.2 * b;
+  beam.intensity = 4;
 
-  // bike pose
-  const s = rideS(t);
-  const r = roadAt(s);
-  const fwd = new THREE.Vector3(Math.cos(r.psi), 0, -Math.sin(r.psi));
-  const right = new THREE.Vector3(Math.sin(r.psi), 0, Math.cos(r.psi));
-  bikeRoot.position.set(r.x, 0, r.z).addScaledVector(right, LANE);
-  bikeRoot.rotation.y = r.psi;
-  leanG.rotation.x = 0;
-  pivot.rotation.z = THREE.MathUtils.degToRad(wheelieDeg(t));
-  // the rear tyre spins up for the burnout while the front stays put
-  const burn = Math.max(0, t - T_LAND);
-  rearWheel.rotation.z = -s / R_REAR - 55 * burn * burn - 30 * burn;
-  frontWheel.rotation.z = -s / R_FRONT * (1 - 0.35 * smooth(0, 10, wheelieDeg(t)));
-
-  // lights that follow the bike
+  // lights follow the bike
   const bp = bikeRoot.position;
-  key.position.set(bp.x + 5, 9, bp.z + 7);
-  key.target.position.copy(bp);
-  rim.position.copy(bp).addScaledVector(fwd, -8).add(new THREE.Vector3(0, 5, -3));
-  rim.target.position.copy(bp);
-  warmRim.position.copy(bp).addScaledVector(fwd, 10).add(new THREE.Vector3(0, 2.5, 0));
-  warmRim.target.position.copy(bp);
+  key.position.set(bp.x + 1.2, 7.5, 2.2);
+  key.target.position.set(bp.x - 0.2, 0, 0);
+  rimCool.position.set(bp.x - 6, 3.2, -4.5);
+  rimCool.target.position.set(bp.x, 0.7, 0);
+  rimWarm.position.set(bp.x + 3, 2.2, -6);
+  rimWarm.target.position.set(bp.x, 0.7, 0);
 
-  // camera
+  // camera, following the bike a beat behind as it launches
   const c = camAt(t);
   const az = THREE.MathUtils.degToRad(c.az), el = THREE.MathUtils.degToRad(c.el);
-  const anchor = bp.clone().add(new THREE.Vector3(0, c.h, 0));
-  const tgt = anchor.clone().addScaledVector(fwd, c.look);
-  camera.position.copy(anchor)
-    .addScaledVector(fwd, c.dist * Math.cos(el) * Math.cos(az))
-    .addScaledVector(right, c.dist * Math.cos(el) * Math.sin(az))
-    .add(new THREE.Vector3(0, c.dist * Math.sin(el), 0));
+  const lag = travel(t - 0.12);
+  const tgt = new THREE.Vector3(lag + c.tx, c.ty, 0);
+  camera.position.set(
+    tgt.x + c.dist * Math.cos(el) * Math.cos(az),
+    tgt.y + c.dist * Math.sin(el),
+    tgt.z + c.dist * Math.cos(el) * Math.sin(az));
   camera.fov = c.fov;
   camera.updateProjectionMatrix();
   camera.lookAt(tgt);
+  scene.updateMatrixWorld(true);
+  camera.updateMatrixWorld();
+
+  // smoke
+  const s = smokeAt(t), u = smokeMat.uniforms;
+  u.count.value = s.pos.length;
+  s.pos.forEach((p, i) => u.puffP.value[i].copy(p));
+  s.amp.forEach((a, i) => { u.puffA.value[i] = a; });
+  u.erode.value = s.erode;
+  u.fade.value = s.fade;
+  u.time.value = t;
+  const headPos = body.localToWorld(bike.headlight.clone());
+  const headDir = body.localToWorld(beamTarget.position.clone()).sub(headPos).normalize();
+  u.headPos.value.copy(headPos);
+  u.headDir.value.copy(headDir);
+  u.tailPos.value.copy(body.localToWorld(bike.tailLight.clone()));
+  u.tailCol.value.set('#ff1a12').multiplyScalar(0.9 * b);
+  // the march covers the smoke and the first few metres of the beam
+  const lo = s.pos.length ? s.lo.clone() : new THREE.Vector3(1e9, 1e9, 1e9), hi = s.pos.length ? s.hi.clone() : new THREE.Vector3(-1e9, -1e9, -1e9);
+  const beamEnd = headPos.clone().addScaledVector(headDir, 9);
+  lo.min(headPos.clone().subScalar(0.3)).min(beamEnd.clone().subScalar(3));
+  hi.max(headPos.clone().addScalar(0.3)).max(beamEnd.clone().addScalar(3));
+  lo.y = Math.max(lo.y, 0);
+  u.boxLo.value.copy(lo);
+  u.boxHi.value.copy(hi);
+  u.keyDir.value.copy(key.position).sub(key.target.position).normalize();
+  u.backDir.value.copy(rimCool.position).sub(rimCool.target.position).normalize();
+  u.camPos.value.copy(camera.position);
+  u.projInv.value.copy(camera.projectionMatrixInverse);
+  u.camWorld.value.copy(camera.matrixWorld);
+  reflector.material.uniforms.camPos.value.copy(camera.position);
 }
 
 window.renderAt = function (t, quality = 0.95) {
   pose(t);
-  camera.layers.set(0);
   composer.render();
   return renderer.domElement.toDataURL(quality === 'png' ? 'image/png' : 'image/jpeg', quality === 'png' ? undefined : quality);
-};
-// Where the rear tyre meets the road on screen at time t (0..1 from the top-left), for the app's smoke.
-window.rearTyreOnScreen = function (t) {
-  pose(t);
-  scene.updateMatrixWorld(true);
-  camera.updateMatrixWorld();
-  const p = new THREE.Vector3(-WB / 2 - 0.1, 0.05, 0);
-  body.localToWorld(p);
-  p.project(camera);
-  return { x: (p.x + 1) / 2, y: (1 - p.y) / 2 };
 };
 window.sceneReady = true;
 </script>

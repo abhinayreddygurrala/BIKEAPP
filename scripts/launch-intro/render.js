@@ -15,7 +15,7 @@ const server = http.createServer((req, res) => {
 }).listen(8765);
 (async () => {
   const [mode, ...rest] = process.argv.slice(2);
-  const w = +(process.env.W || 1080), h = +(process.env.H || 2346), fps = 60, dur = +(process.env.DUR || 1.45);
+  const w = +(process.env.W || 1080), h = +(process.env.H || 2346), fps = 60;
   const browser = await puppeteer.launch({
     executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     headless: true,
@@ -25,27 +25,10 @@ const server = http.createServer((req, res) => {
   const page = await browser.newPage();
   page.on('console', (m) => console.log('page:', m.text()));
   page.on('pageerror', (e) => console.log('pageerror:', e.message));
-  await page.goto(`http://localhost:8765/scene.html?w=${w}&h=${h}${process.env.BG ? '&bg=' + encodeURIComponent(process.env.BG) : ''}`);
+  await page.goto(`http://localhost:8765/scene.html?w=${w}&h=${h}`);
   await page.waitForFunction('window.sceneReady === true', { timeout: 60000 });
   console.log('gpu:', await page.evaluate(() => { const gl = document.querySelector('canvas').getContext('webgl2'); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : 'unknown'; }));
-  if (mode === 'puffs') {
-    await page.goto('http://localhost:8765/puffs.html');
-    await page.waitForFunction('window.ready === true');
-    for (const [i, seed] of [[1, 11], [2, 23], [3, 37]]) {
-      const url = await page.evaluate((s) => window.puff(s), seed);
-      fs.writeFileSync(path.join(root, `smoke-${i}.png`), Buffer.from(url.split(',')[1], 'base64'));
-    }
-    console.log('rendered smoke-1..3.png');
-    await browser.close();
-    server.close();
-    return;
-  }
-  if (mode === 'tyre') {
-    console.log('rear tyre on screen:', JSON.stringify(await page.evaluate((t) => window.rearTyreOnScreen(t), +(rest[0] || dur))));
-    await browser.close();
-    server.close();
-    return;
-  }
+  const dur = await page.evaluate(() => window.DURATION);
   const out = path.join(root, mode === 'video' ? 'frames' : 'stills');
   fs.rmSync(out, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
