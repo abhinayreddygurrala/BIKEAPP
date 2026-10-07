@@ -38,6 +38,20 @@ export const config = {
   // Photo backup caps, kept well inside Cloud Storage's free 5 GB.
   mediaUserQuotaBytes: int('MEDIA_USER_QUOTA_MB', 1024) * 1024 * 1024,
   mediaTotalQuotaBytes: int('MEDIA_TOTAL_QUOTA_MB', 4096) * 1024 * 1024,
+  // Photo download links handed out per day. All accounts together stay
+  // under ~3 GB a day, inside Cloud Storage's free 100 GB of downloads a month.
+  mediaDailyLinkUserBytes: int('MEDIA_DAILY_LINKS_USER_MB', 2048) * 1024 * 1024,
+  mediaDailyLinkTotalBytes: int('MEDIA_DAILY_LINKS_TOTAL_MB', 3072) * 1024 * 1024,
+  // Cloud backup of records. The whole database has to fit on the server's
+  // free 30 GB disk with room for its nightly copy; one account gets plenty
+  // for years of rides (an hour of GPS points is roughly half a megabyte).
+  recordsUserQuotaBytes: int('RECORDS_USER_QUOTA_MB', 500) * 1024 * 1024,
+  recordsTotalQuotaBytes: int('RECORDS_TOTAL_QUOTA_MB', 10240) * 1024 * 1024,
+  // Backup downloads per day (before gzip). A restore downloads an account
+  // once; these stop anyone pulling backups over and over, since the
+  // server's outbound traffic is billed past Google's free 1 GB a month.
+  recordsDailyDownloadUserBytes: int('RECORDS_DAILY_DOWNLOAD_USER_MB', 1536) * 1024 * 1024,
+  recordsDailyDownloadTotalBytes: int('RECORDS_DAILY_DOWNLOAD_TOTAL_MB', 3072) * 1024 * 1024,
   // Google Maps calls per month, a little under each free allowance (10,000
   // for Compute Routes, Autocomplete Requests and Place Details Essentials).
   // Past these the app uses Apple's maps, so Google never bills.

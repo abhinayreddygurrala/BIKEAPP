@@ -21,6 +21,12 @@ const app = await buildApp({
   media,
   mediaUserQuotaBytes: config.mediaUserQuotaBytes,
   mediaTotalQuotaBytes: config.mediaTotalQuotaBytes,
+  mediaDailyLinkUserBytes: config.mediaDailyLinkUserBytes,
+  mediaDailyLinkTotalBytes: config.mediaDailyLinkTotalBytes,
+  recordsUserQuotaBytes: config.recordsUserQuotaBytes,
+  recordsTotalQuotaBytes: config.recordsTotalQuotaBytes,
+  recordsDailyDownloadUserBytes: config.recordsDailyDownloadUserBytes,
+  recordsDailyDownloadTotalBytes: config.recordsDailyDownloadTotalBytes,
   google,
   mapsCaps: config.mapsCaps,
 });

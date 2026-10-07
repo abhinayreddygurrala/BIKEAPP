@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAuth } from '../auth.js';
 import type { Db } from '../db.js';
 import { sendError } from '../errors.js';
+import { DailyAllowance } from '../limits.js';
 import type { MediaStore } from '../storage.js';
 
 type Options = {
@@ -12,6 +13,9 @@ type Options = {
   media: MediaStore | null;
   userQuotaBytes: number;
   totalQuotaBytes: number;
+  /** Bytes of download links handed out per day, per account and for everyone together. */
+  dailyLinkUserBytes: number;
+  dailyLinkTotalBytes: number;
 };
 
 // The phone's own file layout (relative to its documents folder), so a
@@ -38,6 +42,7 @@ export async function deleteAllMedia(db: Db, media: MediaStore | null, userId: s
 export const mediaRoutes: FastifyPluginAsync<Options> = async (app, options) => {
   const { db, media, userQuotaBytes, totalQuotaBytes } = options;
   const guard = requireAuth(db, options.sessionDays);
+  const links = new DailyAllowance(options.dailyLinkUserBytes, options.dailyLinkTotalBytes);
 
   const usedByUser = db.prepare('SELECT coalesce(sum(size), 0) AS used FROM user_media WHERE user_id = ? AND path <> ?');
   const usedTotal = db.prepare('SELECT coalesce(sum(size), 0) AS used FROM user_media WHERE NOT (user_id = ? AND path = ?)');
@@ -78,16 +83,21 @@ export const mediaRoutes: FastifyPluginAsync<Options> = async (app, options) => 
     return { url: media!.signedUrl('PUT', objectKeyFor(userId, path), { expiresSeconds: LINK_SECONDS, headers }), headers };
   });
 
-  // Everything this account has backed up, with download links (for a restore).
-  app.get('/files', { preHandler: guard }, async (request) => {
+  // Everything this account has backed up, with download links (for a
+  // restore). Downloads from the bucket are billed past Google's free
+  // 100 GB a month, so the links handed out each day are capped too.
+  app.get('/files', { preHandler: guard }, async (request, reply) => {
     const { userId } = request.auth!;
     const rows = owned.all(userId) as { path: string; size: number }[];
+    const usedBytes = rows.reduce((sum, r) => sum + Number(r.size), 0);
+    if (!links.take(userId, usedBytes)) {
+      return sendError(reply, 429, 'download_limit', 'That’s a lot of downloading for one day. Try again tomorrow.');
+    }
     const files = rows.map((r) => ({
       path: r.path,
       size: Number(r.size),
       url: media!.signedUrl('GET', objectKeyFor(userId, r.path), { expiresSeconds: 60 * 60 }),
     }));
-    const usedBytes = files.reduce((sum, f) => sum + f.size, 0);
     return { files, usedBytes, quotaBytes: userQuotaBytes };
   });
 

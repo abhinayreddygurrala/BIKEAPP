@@ -1,6 +1,8 @@
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import net from 'node:net';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import type { Db } from './db.js';
@@ -20,10 +22,21 @@ export type AppOptions = {
   media?: MediaStore | null;
   mediaUserQuotaBytes?: number;
   mediaTotalQuotaBytes?: number;
+  /** Photo download links handed out per day (each counted at its file's size). */
+  mediaDailyLinkUserBytes?: number;
+  mediaDailyLinkTotalBytes?: number;
+  /** Cloud backup of records: space, and downloads per day. */
+  recordsUserQuotaBytes?: number;
+  recordsTotalQuotaBytes?: number;
+  recordsDailyDownloadUserBytes?: number;
+  recordsDailyDownloadTotalBytes?: number;
   /** Google place search and routing; null makes the app use Apple's maps. */
   google?: GoogleMaps | null;
   mapsCaps?: MapsCaps;
 };
+
+const MB = 1024 * 1024;
+const gzipAsync = promisify(gzip);
 
 /**
  * Fastify refuses "trust N proxy hops" because a direct client could forge
@@ -82,6 +95,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.setNotFoundHandler((_request, reply) => sendError(reply, 404, 'not_found', 'Not found.'));
 
+  // Backup downloads are big JSON that gzip shrinks several times over, and
+  // this server's outbound traffic is billed past Google's free 1 GB a month.
+  // Phones ask for gzip on their own and unpack it without any app code.
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (typeof payload !== 'string' || payload.length < 1024) return payload;
+    if (!/\bgzip\b/.test(String(request.headers['accept-encoding'] ?? ''))) return payload;
+    reply.header('Content-Encoding', 'gzip').header('Vary', 'Accept-Encoding');
+    return gzipAsync(payload);
+  });
+
   app.get('/health', async (_request, reply) => {
     try {
       options.db.prepare('SELECT 1').get();
@@ -93,14 +116,24 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   const media = options.media ?? null;
   await app.register(authRoutes, { prefix: '/auth', db: options.db, sessionDays: options.sessionDays, media });
-  await app.register(syncRoutes, { prefix: '/sync', db: options.db, sessionDays: options.sessionDays });
+  await app.register(syncRoutes, {
+    prefix: '/sync',
+    db: options.db,
+    sessionDays: options.sessionDays,
+    userQuotaBytes: options.recordsUserQuotaBytes ?? 500 * MB,
+    totalQuotaBytes: options.recordsTotalQuotaBytes ?? 10 * 1024 * MB,
+    dailyDownloadUserBytes: options.recordsDailyDownloadUserBytes ?? 1536 * MB,
+    dailyDownloadTotalBytes: options.recordsDailyDownloadTotalBytes ?? 3072 * MB,
+  });
   await app.register(mediaRoutes, {
     prefix: '/media',
     db: options.db,
     sessionDays: options.sessionDays,
     media,
-    userQuotaBytes: options.mediaUserQuotaBytes ?? 1024 * 1024 * 1024,
-    totalQuotaBytes: options.mediaTotalQuotaBytes ?? 4 * 1024 * 1024 * 1024,
+    userQuotaBytes: options.mediaUserQuotaBytes ?? 1024 * MB,
+    totalQuotaBytes: options.mediaTotalQuotaBytes ?? 4 * 1024 * MB,
+    dailyLinkUserBytes: options.mediaDailyLinkUserBytes ?? 2048 * MB,
+    dailyLinkTotalBytes: options.mediaDailyLinkTotalBytes ?? 3072 * MB,
   });
   await app.register(mapsRoutes, {
     prefix: '/maps',

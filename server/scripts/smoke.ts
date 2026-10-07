@@ -2,6 +2,7 @@
 // database — nothing to install, nothing touched on disk.  Run: npm run smoke
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 
 import { buildApp } from '../src/app.js';
 import { migrate, openDatabase } from '../src/db.js';
@@ -367,6 +368,20 @@ console.log('Cloud backup');
   assert.equal((all.find((r) => r.kind === 'ride_points')?.data.points as unknown[]).length, 25_000);
   ok('downloads everything back, with edits applied and all GPS points intact');
 
+  const zipped = await app.inject({
+    method: 'GET',
+    url: '/sync/records',
+    remoteAddress: '203.0.113.250',
+    headers: { authorization: `Bearer ${alice}`, 'accept-encoding': 'gzip, deflate, br' },
+  });
+  assert.equal(zipped.headers['content-encoding'], 'gzip');
+  const unzipped = gunzipSync(zipped.rawPayload).toString();
+  assert.equal((JSON.parse(unzipped) as { records: unknown[] }).records.length, 4);
+  assert.ok(zipped.rawPayload.length < unzipped.length / 3, `only shrank to ${zipped.rawPayload.length} of ${unzipped.length}`);
+  const tiny = await app.inject({ method: 'GET', url: '/health', headers: { 'accept-encoding': 'gzip' } });
+  assert.equal(tiny.headers['content-encoding'], undefined);
+  ok(`gzips big downloads for phones that ask (${(unzipped.length / 1e6).toFixed(1)} MB sent as ${(zipped.rawPayload.length / 1e6).toFixed(1)} MB)`);
+
   const bobsView = await api('GET', '/sync/records', { token: bob });
   assert.equal(bobsView.json?.records.length, 0);
   assert.deepEqual((await api('GET', '/sync/summary', { token: bob })).json?.counts, {});
@@ -501,6 +516,97 @@ console.log('Photo backup');
   assert.ok(deletedObjects.includes(`users/${carol.id}/photos/bikes/bike-1.jpg`));
   assert.equal((db.prepare('SELECT count(*) AS n FROM user_media WHERE user_id = ?').get(carol.id) as { n: number }).n, 0);
   ok('deleting the account deletes all its photos');
+}
+
+console.log('Storage and download limits');
+{
+  // Separate servers with tiny limits, so the caps can be hit quickly.
+  const limitedApp = async (options: Partial<Parameters<typeof buildApp>[0]>) => {
+    const limitsDb = openDatabase(':memory:');
+    migrate(limitsDb, () => {});
+    const server = await buildApp({ db: limitsDb, sessionDays: 60, logger: false, media, ...options });
+    let octet = 1;
+    return async (username: string) => {
+      const remoteAddress = `192.0.2.${octet++}`;
+      const send = async (method: 'GET' | 'POST', url: string, token?: string, body?: unknown) => {
+        const res = await server.inject({
+          method,
+          url,
+          remoteAddress,
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+          ...(body !== undefined ? { payload: body as object } : {}),
+        });
+        return { status: res.statusCode, json: JSON.parse(res.body) as Record<string, any> };
+      };
+      const phone = `+1 501 234 ${5000 + octet}`;
+      const created = await send('POST', '/auth/signup', undefined, {
+        username,
+        email: `${username.toLowerCase()}@example.com`,
+        phone,
+        password: 'limits-pass-123',
+      });
+      const token = created.json.token as string;
+      return {
+        push: (id: string, mb: number) =>
+          send('POST', '/sync/push', token, {
+            upserts: [{ kind: 'fuel_logs', id, data: { note: 'x'.repeat(Math.round(mb * MB)) } }],
+            deletes: [],
+          }),
+        remove: (id: string) => send('POST', '/sync/push', token, { upserts: [], deletes: [{ kind: 'fuel_logs', id }] }),
+        download: () => send('GET', '/sync/records', token),
+        addFile: (path: string, mb: number) => send('POST', '/media/upload-url', token, { path, size: mb * MB }),
+        files: () => send('GET', '/media/files', token),
+      };
+    };
+  };
+
+  const storage = await limitedApp({ recordsUserQuotaBytes: 2 * MB, recordsTotalQuotaBytes: 3 * MB });
+  const erin = await storage('Limit_Erin');
+  assert.equal((await erin.push('r1', 1.5)).status, 200);
+  const over = await erin.push('r2', 0.8);
+  assert.equal(over.status, 413);
+  assert.equal(over.json.error.code, 'quota_exceeded');
+  assert.equal((await erin.push('r1', 1.7)).status, 200, 'replacing a record only counts its new size');
+  ok('caps each account’s backup space (replacing a record doesn’t double-count)');
+
+  const frank = await storage('Limit_Frank');
+  assert.equal((await frank.push('f1', 0.5)).status, 200);
+  const full = await frank.push('f2', 1.2);
+  assert.equal(full.status, 413);
+  assert.equal(full.json.error.code, 'storage_full');
+  ok('caps the whole database, so one flood of accounts can’t fill the server’s disk');
+
+  assert.equal((await erin.push('r1', 0.1)).status, 200);
+  assert.equal((await erin.remove('r1')).status, 200);
+  assert.equal((await frank.push('f2', 1.2)).status, 200, 'space freed by deletes is usable again');
+  ok('shrinking and deleting always work, and free the space up again');
+
+  const downloads = await limitedApp({
+    recordsDailyDownloadUserBytes: 3 * MB,
+    recordsDailyDownloadTotalBytes: 4 * MB,
+    mediaDailyLinkUserBytes: 3 * MB,
+    mediaDailyLinkTotalBytes: 4 * MB,
+  });
+  const gina = await downloads('Limit_Gina');
+  const hal = await downloads('Limit_Hal');
+  await gina.push('g1', 1.2);
+  await hal.push('h1', 1.2);
+  assert.equal((await gina.download()).status, 200);
+  assert.equal((await gina.download()).status, 200);
+  const greedy = await gina.download();
+  assert.equal(greedy.status, 429);
+  assert.equal(greedy.json.error.code, 'download_limit');
+  assert.equal((await hal.download()).status, 200);
+  assert.equal((await hal.download()).status, 429, 'everyone together is capped too');
+  ok('caps backup downloads per day, per account and for everyone together');
+
+  await gina.addFile('photos/bikes/g.jpg', 2);
+  await hal.addFile('photos/bikes/h.jpg', 1.5);
+  assert.equal((await gina.files()).status, 200);
+  assert.equal((await gina.files()).status, 429);
+  assert.equal((await hal.files()).status, 200);
+  assert.equal((await hal.files()).status, 429, 'everyone together is capped too');
+  ok('caps photo download links per day, per account and for everyone together');
 }
 
 console.log('Malformed requests');
