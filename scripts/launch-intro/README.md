@@ -9,13 +9,23 @@ The 3D video `assets/video/launch-intro.mp4` is rendered from `scene.html`, a th
 
 `src/components/ui/LaunchIntro.tsx` plays it after the splash screen and fades the app in from `REVEAL_AT` (4.3 s). If you change the timing in `scene.html`, update `REVEAL_AT`.
 
-The smoke is a raymarched volume, drawn in a full-screen pass after the scene. It's made from puffs thrown off the rear tyre (`PUFFS` / `smokeAt`), eroded by noise. It uses the scene's depth, so it sits correctly around the bike and is reflected in the floor.
+The smoke is a raymarched volume, marched once per frame in a full-screen pass. It's made from puffs thrown off the rear tyre (`PUFFS` / `smokeAt`), eroded by noise that thins older smoke into wisps. It uses the scene's depth, so it sits correctly around the bike and is reflected in the floor.
+
+What makes it look real rather than CG:
+
+- **Motion blur and anti-aliasing:** every frame averages 12 sub-frames across a 180° shutter (`?mb=` in the URL, default 12), each nudged by a fraction of a pixel. The smoke is computed once per frame; the bike, camera and lights are re-rendered per sub-frame.
+- **A lens:** depth of field focused on the bike (each pixel's distance, smoke included, rides in the alpha channel), bloom only on real lights, and a gentle grade, vignette and grain. Blacks stay the splash colour.
+- **Moulded bodywork:** `moulded()` in `bike.js` builds each body panel as one smooth shell from its side profile. It rounds over at the edges and domes towards the middle, with smoothed normals so reflections run cleanly. Strip lights in the studio show this off on the paint.
+- **The studio:** polished-concrete floor (glossy, uneven reflections, soft contact shadows under the tyres), drilled brake discs, a dash screen and satin tyres.
+- **The loop:** the floor pattern repeats every `TRAVEL` metres and the disc holes every spoke, so the last frame still matches the first.
+
+`?fovk=`, `?ox=` and `?oy=` reframe it for other aspect ratios (lens scale and frame shift).
 
 ```sh
 cd scripts/launch-intro
 npm install                       # three.js + puppeteer-core (uses your installed Google Chrome)
 npm run stills                    # optional: test frames in stills/
-npm run frames                    # 286 PNG frames in frames/ (about 3 min on an M2)
+npm run frames                    # 286 PNG frames in frames/ (about 5 min on an M2)
 ffmpeg -y -framerate 60 -i frames/f_%04d.png \
   -vf "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p" \
   -c:v libx264 -preset slow -crf 21 -profile:v high \
