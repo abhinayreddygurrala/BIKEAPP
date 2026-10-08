@@ -2,6 +2,7 @@
   "name": "odomap-server",
   "version": "1.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "description": "Odomap backend: accounts (unique username/email/phone) and, later, group chat. SQLite database, deployed on Railway.",
   "engines": {
