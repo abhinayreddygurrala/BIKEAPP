@@ -330,7 +330,7 @@ export default function NavigationScreen() {
                 <ActivityIndicator color={theme.text} style={styles.spinner} />
               ) : !mapsSource ? (
                 <ThemedText type="small" themeColor="textSecondary">
-                  Route planning needs a connection to Odomap. Check your connection and reopen this tab.
+                  Route planning isn’t available right now. Check your connection, or try again later.
                 </ThemedText>
               ) : (
                 <>
@@ -405,12 +405,17 @@ export default function NavigationScreen() {
                             } along the way; ${selectedRoute.pins.length === 1 ? 'it keeps' : 'they keep'} you on this road.`
                           : `Opens ${mapsAppName} with voice directions for this road.`}
                       </ThemedText>
-                      <PrimaryButton label={`Open in ${otherAppName} Instead`} variant="muted" onPress={onOpenInOtherApp} />
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {otherAppName} plans its own roads to {to.place.title}
-                        {selectedRoute.avoidsHighways ? ' (avoiding highways)' : ''}, so they may differ from the line
-                        on this map.
-                      </ThemedText>
+                      {/* Only iPhones have both maps apps; Android gets Google only. */}
+                      {canChooseAppleMaps() ? (
+                        <>
+                          <PrimaryButton label={`Open in ${otherAppName} Instead`} variant="muted" onPress={onOpenInOtherApp} />
+                          <ThemedText type="small" themeColor="textSecondary">
+                            {otherAppName} plans its own roads to {to.place.title}
+                            {selectedRoute.avoidsHighways ? ' (avoiding highways)' : ''}, so they may differ from the line
+                            on this map.
+                          </ThemedText>
+                        </>
+                      ) : null}
                     </>
                   ) : null}
                 </>
