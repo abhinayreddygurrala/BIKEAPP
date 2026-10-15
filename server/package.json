@@ -13,7 +13,8 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "users": "tsx scripts/users.ts"
   },
   "dependencies": {
     "@fastify/helmet": "^13.1.1",
