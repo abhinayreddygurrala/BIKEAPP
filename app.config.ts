@@ -6,7 +6,7 @@ import withIosSceneDelegate from "./plugins/withIosSceneDelegate";
 const config: ExpoConfig = {
   name: "Odomap",
   slug: "odomap",
-  version: "1.0.0",
+  version: "1.0.1",
   orientation: "default",
   icon: "./assets/images/icon.png",
   scheme: "odomap",
@@ -18,7 +18,7 @@ const config: ExpoConfig = {
     // The Apple Developer Program team (enrolling kept the same team ID).
     appleTeamId: "DWBAYP8K69",
     // Bump for every upload to App Store Connect.
-    buildNumber: "4",
+    buildNumber: "6",
     icon: "./assets/expo.icon",
     supportsTablet: false,
     infoPlist: {

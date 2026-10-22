@@ -46,3 +46,7 @@ example
 # local tool output (diagrams, promo videos)
 .archify/
 brag-output/
+brag-output-*/
+
+# local App Store archives
+build-release/
